@@ -1,0 +1,6 @@
+{
+  "name": "מערכת הפעלה פיננסית חכמה",
+  "description": "מערכת הפעלה פיננסית אישית ומשפחתית חכמה לניהול תזרים, חישוב כסף פנוי אמיתי, תחזית סוף חודש וייעוץ AI",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

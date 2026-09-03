@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <script>
+      (function() {
+        try {
+          var nativeFetch = window.fetch;
+          var activeFetch = nativeFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return activeFetch || nativeFetch;
+            },
+            set: function(fn) {
+              activeFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          try {
+            var proto = window.Window ? window.Window.prototype : null;
+            if (proto) {
+              var protoDesc = Object.getOwnPropertyDescriptor(proto, 'fetch');
+              if (protoDesc && protoDesc.configurable) {
+                var pFetch = proto.fetch;
+                Object.defineProperty(proto, 'fetch', {
+                  get: function() { return pFetch; },
+                  set: function(fn) { pFetch = fn; },
+                  configurable: true,
+                  enumerable: true
+                });
+              }
+            }
+          } catch (e2) {}
+        }
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>מערכת הפעלה פיננסית חכמה</title>
+    <meta name="description" content="מערכת הפעלה פיננסית אישית ומשפחתית חכמה לניהול תזרים, חישוב כסף פנוי אמיתי, תחזית סוף חודש וייעוץ AI" />
+    <meta property="og:title" content="מערכת הפעלה פיננסית חכמה" />
+    <meta property="og:description" content="מערכת הפעלה פיננסית אישית ומשפחתית חכמה לניהול תזרים, חישוב כסף פנוי אמיתי, תחזית סוף חודש וייעוץ AI" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700;800&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-slate-100 antialiased font-['Assistant',sans-serif] selection:bg-[#00B894] selection:text-white min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
