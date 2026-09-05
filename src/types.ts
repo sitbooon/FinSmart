@@ -39,6 +39,7 @@ export interface Transaction {
   subCategory?: string;
   accountId: string;
   creditCardId?: string;
+  paymentMethod?: 'checking' | 'credit_card' | 'bank_transfer' | 'cash';
   isRecurring?: boolean;
   isFixed?: boolean;
   isBusiness?: boolean;
@@ -146,7 +147,31 @@ export interface DayForecast {
   events: Array<{ name: string; amount: number; type: 'income' | 'expense' }>;
 }
 
+export interface MonthSummary {
+  monthKey: string; // 'YYYY-MM'
+  year: number;
+  month: number;
+  label: string; // 'ספטמבר 2026'
+  shortLabel: string; // 'ספט׳ 26'
+  income: number;
+  expense: number;
+  net: number;
+  savingsRate: number;
+  transactionCount: number;
+  isCurrentMonth: boolean;
+}
+
+export interface AvailableMoneyBreakdown {
+  currentCheckingBalance: number;
+  pendingIncomesThisMonth: number;
+  upcomingCreditCardBills: number;
+  pendingFixedExpenses: number;
+  realAvailableMoney: number;
+}
+
 export interface FinancialSnapshot {
+  selectedMonth?: string;
+  selectedMonthLabel?: string;
   currentCheckingBalance: number;
   realAvailableMoney: number;
   projectedEndOfMonthBalance: number;
@@ -169,6 +194,7 @@ export interface FinancialSnapshot {
   totalDebts: number;
   netWorth: number;
   topExpenseCategories: Array<{ category: string; amount: number; percentage: number }>;
+  availableMoneyBreakdown?: AvailableMoneyBreakdown;
 }
 
 export interface WhatIfScenario {

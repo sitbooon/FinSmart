@@ -10,7 +10,6 @@ interface AddTransactionModalProps {
   accounts: Account[];
   creditCards: CreditCard[];
   merchantRules: Record<string, string>;
-  activeFamilyMember: string;
 }
 
 export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
@@ -21,7 +20,6 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   accounts,
   creditCards,
   merchantRules,
-  activeFamilyMember,
 }) => {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -33,7 +31,6 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   const [creditCardId, setCreditCardId] = useState(creditCards[0]?.id || '');
   const [isInstallments, setIsInstallments] = useState(false);
   const [totalInstallments, setTotalInstallments] = useState('3');
-  const [familyMember, setFamilyMember] = useState(activeFamilyMember || 'משותף');
   const [notes, setNotes] = useState('');
   const [autoMatched, setAutoMatched] = useState(false);
 
@@ -70,7 +67,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
       creditCardId: paymentMethod === 'credit_card' ? creditCardId : undefined,
       isFixed: false,
       isBusiness: false,
-      familyMember,
+      familyMember: 'משותף',
       notes: notes || undefined,
       installments:
         paymentMethod === 'credit_card' && isInstallments
@@ -198,42 +195,25 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             </div>
           </div>
 
-          {/* Category & Family Member */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-gray-600 dark:text-gray-400 mb-1 font-medium">
-                קטגוריה
-              </label>
-              <select
-                value={category}
-                onChange={(e) => {
-                  setCategory(e.target.value);
-                  setAutoMatched(false);
-                }}
-                className="w-full px-3 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
-              >
-                {categories.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-gray-600 dark:text-gray-400 mb-1 font-medium">
-                שיוך משפחתי
-              </label>
-              <select
-                value={familyMember}
-                onChange={(e) => setFamilyMember(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
-              >
-                <option value="משותף">משותף</option>
-                <option value="דניאל">דניאל</option>
-                <option value="מיכל">מיכל</option>
-              </select>
-            </div>
+          {/* Category */}
+          <div>
+            <label className="block text-gray-600 dark:text-gray-400 mb-1 font-medium">
+              קטגוריה
+            </label>
+            <select
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setAutoMatched(false);
+              }}
+              className="w-full px-3 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Payment Method (Account vs Credit Card) */}

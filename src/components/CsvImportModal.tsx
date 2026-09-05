@@ -1,12 +1,33 @@
-import React, { useState } from 'react';
-import { X, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
-import { Transaction } from '../types';
+import React, { useState, useRef } from 'react';
+import {
+  X,
+  Upload,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  ArrowRight,
+  Info,
+  Check,
+  CreditCard as CardIcon,
+  Building2,
+  Trash2,
+  Filter,
+} from 'lucide-react';
+import { Transaction, Account, CreditCard } from '../types';
+import {
+  parseExcelBuffer,
+  parseTextStatement,
+  ParsedBankResult,
+} from '../utils/bankStatementParser';
 
 interface CsvImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (transactions: Transaction[]) => void;
+  onImport: (transactions: Transaction[], newCheckingBalance?: number) => void;
   existingTransactions: Transaction[];
+  accounts?: Account[];
+  creditCards?: CreditCard[];
 }
 
 export const CsvImportModal: React.FC<CsvImportModalProps> = ({
@@ -14,255 +35,677 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   onClose,
   onImport,
   existingTransactions,
+  accounts = [],
+  creditCards = [],
 }) => {
-  const [csvText, setCsvText] = useState('');
-  const [parsedRows, setParsedRows] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'upload' | 'paste' | 'guide'>('upload');
+  const [dragActive, setDragActive] = useState(false);
+  const [fileName, setFileName] = useState<string>('');
+  const [pastedText, setPastedText] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [duplicateCount, setDuplicateCount] = useState(0);
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  // Parsed result
+  const [parsedData, setParsedData] = useState<ParsedBankResult | null>(null);
+  const [selectedTxIds, setSelectedTxIds] = useState<Set<string>>(new Set());
+  const [shouldUpdateBalance, setShouldUpdateBalance] = useState<boolean>(true);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(
+    accounts[0]?.id || 'acc-1'
+  );
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  // Sample Israeli bank CSV format for quick test
-  const sampleBankCsv = `תאריך,תיאור,חובה,זכות,קטגוריה
-2026-09-02,סופר-פארם קניון רמת אביב,189.90,,בריאות ופארם
-2026-09-03,תחנת דלק סונול גלילות,270.00,,רכב ודלק
-2026-09-03,העברה מחברת הייטק בע״מ,,18500.00,משכורת
-2026-09-04,גולדה גלידה תל אביב,46.00,,מסעדות ובילויים
-2026-09-05,מחסני להב רמת השרון,540.20,,סופר ומזון
-2026-09-06,אייקאה נתניה,480.00,,בית ודיור`;
+  // Israeli sample CSV for users who want to see how a statement looks
+  const sampleBankCsv = `תאריך,תיאור,חובה,זכות,יתרה
+02/09/2026,סופר-פארם קניון רמת אביב,189.90,,14250.00
+02/09/2026,תחנת דלק סונול גלילות,270.00,,14439.90
+01/09/2026,העברה מחברת הייטק בע״מ,,18500.00,14709.90
+01/09/2026,גולדה גלידה תל אביב,46.00,,-3790.10
+31/08/2026,מחסני להב רמת השרון,540.20,,-3744.10
+30/08/2026,איקאה נתניה,480.00,,-3203.90`;
 
-  const handleLoadSample = () => {
-    setCsvText(sampleBankCsv);
-    handleParseText(sampleBankCsv);
-  };
+  const processParsedResult = (result: ParsedBankResult, name: string) => {
+    setFileName(name);
+    setParseError(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setCsvText(content);
-      handleParseText(content);
+    if (result.transactions.length === 0) {
+      setParseError('לא זוהו שורות תנועה תקינות בקובץ. אנא ודא שהקובץ כולל עמודות תאריך, תיאור וסכום.');
+      setParsedData(null);
+      return;
+    }
+
+    // Mark duplicates against existing transactions
+    const transactionsWithDups = result.transactions.map((tx) => {
+      const isDup = existingTransactions.some(
+        (ex) =>
+          ex.date === tx.date &&
+          Math.abs(ex.amount - tx.amount) < 0.01 &&
+          (ex.description.trim().toLowerCase() === tx.description.trim().toLowerCase() ||
+            (tx.reference && ex.notes?.includes(tx.reference)))
+      );
+      return { ...tx, isDuplicate: isDup };
+    });
+
+    const enrichedResult: ParsedBankResult = {
+      ...result,
+      transactions: transactionsWithDups,
     };
-    reader.readAsText(file, 'utf-8');
+
+    setParsedData(enrichedResult);
+
+    // Default: select all non-duplicate transactions
+    const initialSelected = new Set<string>();
+    transactionsWithDups.forEach((tx) => {
+      if (!tx.isDuplicate) {
+        initialSelected.add(tx.id);
+      }
+    });
+    // If all are marked duplicates, select all anyway so the user can choose
+    if (initialSelected.size === 0 && transactionsWithDups.length > 0) {
+      transactionsWithDups.forEach((tx) => initialSelected.add(tx.id));
+    }
+    setSelectedTxIds(initialSelected);
   };
 
-  const handleParseText = async (text: string) => {
+  const handleFileChange = async (file: File) => {
     setIsProcessing(true);
-    let rows: any[] = [];
+    setParseError(null);
 
     try {
-      // Call backend CSV parse endpoint
-      const response = await fetch('/api/csv/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent: text, csvText: text }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        rows = data.records || data.transactions || [];
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+        // Read as ArrayBuffer for SheetJS
+        const buffer = await file.arrayBuffer();
+        const result = parseExcelBuffer(buffer);
+        processParsedResult(result, file.name);
       } else {
-        throw new Error('Server returned error');
+        // Read as Text for CSV / TSV / TXT
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const text = e.target?.result as string;
+          const result = parseTextStatement(text);
+          processParsedResult(result, file.name);
+          setIsProcessing(false);
+        };
+        reader.onerror = () => {
+          setParseError('שגיאה בקריאת הקובץ מהמחשב.');
+          setIsProcessing(false);
+        };
+        // Try UTF-8
+        reader.readAsText(file, 'utf-8');
+        return; // reader will finish asynchronously
       }
-    } catch (err) {
-      // Robust client-side fallback parsing (works offline and on static deployments)
-      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
-        if (parts.length >= 3) {
-          const date = parts[0] || new Date().toISOString().split('T')[0];
-          const desc = parts[1] || 'תנועה מיובאת';
-          const amtNum = parseFloat(parts[2].replace(/[^\d.-]/g, '')) || 0;
-          const cat = parts[4] || 'אחר';
-
-          rows.push({
-            id: `csv-${Date.now()}-${i}`,
-            date,
-            description: desc,
-            amount: Math.abs(amtNum),
-            type: amtNum < 0 ? 'expense' : desc.includes('משכורת') || amtNum > 0 ? 'income' : 'expense',
-            category: cat,
-            subCategory: '',
-            isRecurring: false,
-            isBusiness: false,
-            notes: 'יובא מקובץ CSV',
-          });
-        }
-      }
+    } catch (err: any) {
+      console.error('File parsing error:', err);
+      setParseError('שגיאה בניתוח הקובץ: ' + (err?.message || 'פורמט לא מוכר'));
     } finally {
-      // Check duplicates against existing transactions
-      let dups = 0;
-      const validRows = rows.map((r: any) => {
-        const isDup = existingTransactions.some(
-          (ex) =>
-            ex.date === r.date &&
-            ex.amount === r.amount &&
-            ex.description.trim().toLowerCase() === r.description.trim().toLowerCase()
-        );
-        if (isDup) dups++;
-        return { ...r, isDuplicate: isDup };
-      });
-
-      setDuplicateCount(dups);
-      setParsedRows(validRows);
       setIsProcessing(false);
     }
   };
 
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileChange(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleParsePastedText = () => {
+    if (!pastedText.trim()) {
+      setParseError('נא להדביק שורות תנועות');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const result = parseTextStatement(pastedText);
+      processParsedResult(result, 'שורות שהודבקו');
+    } catch (err: any) {
+      setParseError('שגיאה בניתוח הטקסט: ' + (err?.message || 'פורמט לא מוכר'));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleLoadSample = () => {
+    setPastedText(sampleBankCsv);
+    const result = parseTextStatement(sampleBankCsv);
+    processParsedResult(result, 'קובץ דוגמה ישראלי');
+  };
+
+  const toggleSelectTx = (id: string) => {
+    const next = new Set(selectedTxIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedTxIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (!parsedData) return;
+    if (selectedTxIds.size === parsedData.transactions.length) {
+      setSelectedTxIds(new Set());
+    } else {
+      setSelectedTxIds(new Set(parsedData.transactions.map((t) => t.id)));
+    }
+  };
+
+  const deselectDuplicates = () => {
+    if (!parsedData) return;
+    const next = new Set<string>();
+    parsedData.transactions.forEach((tx) => {
+      if (!tx.isDuplicate) next.add(tx.id);
+    });
+    setSelectedTxIds(next);
+  };
+
   const handleConfirmImport = () => {
-    // Only import non-duplicate or all if user wants
-    const toAdd: Transaction[] = parsedRows
-      .filter((r) => !r.isDuplicate)
-      .map((r, idx) => ({
-        id: `csv-${Date.now()}-${idx}`,
-        date: r.date,
-        description: r.description,
-        amount: r.amount,
-        type: r.type,
-        category: r.category || 'אחר',
-        accountId: 'acc-1',
+    if (!parsedData) return;
+
+    const toImport: Transaction[] = parsedData.transactions
+      .filter((tx) => selectedTxIds.has(tx.id))
+      .map((tx, idx) => ({
+        id: `imp-${Date.now()}-${idx}`,
+        date: tx.date,
+        description: tx.description,
+        amount: tx.amount,
+        type: tx.type,
+        category: tx.category || 'אחר',
+        subCategory: tx.subCategory || '',
+        accountId: selectedAccountId,
+        notes: tx.reference ? `אסמכתא: ${tx.reference}` : 'יובא מקובץ בנק',
         isFixed: false,
         isBusiness: false,
       }));
 
-    if (toAdd.length > 0) {
-      onImport(toAdd);
+    const balanceUpdate =
+      shouldUpdateBalance && parsedData.closingBalance !== undefined
+        ? parsedData.closingBalance
+        : undefined;
+
+    if (toImport.length > 0 || balanceUpdate !== undefined) {
+      onImport(toImport, balanceUpdate);
     }
     onClose();
   };
 
+  const duplicateCount =
+    parsedData?.transactions.filter((t) => t.isDuplicate).length || 0;
+  const selectedCount = selectedTxIds.size;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150 flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="p-4 border-b border-[#E1E8E7] dark:border-[#2D3636] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#EBF7F5] dark:bg-[#00B894]/20 flex items-center justify-center text-[#00B894]">
-              <FileSpreadsheet className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in">
+      <div className="bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+        {/* Modal Header */}
+        <div className="p-4 sm:p-5 border-b border-[#E1E8E7] dark:border-[#2D3636] flex items-center justify-between bg-gray-50/60 dark:bg-[#1A2021]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#00B894] flex items-center justify-center text-white shadow-xs">
+              <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-bold text-sm text-[#2D3436] dark:text-white">
-                ייבוא תנועות מקובץ CSV / אקסל
-              </h2>
-              <p className="text-[11px] text-gray-400">
-                תמיכה בפורמטי בנקים וכרטיסי אשראי ישראליים ומניעת כפילויות
+              <div className="flex items-center gap-2">
+                <h2 className="font-extrabold text-base text-[#2D3436] dark:text-white">
+                  ייבוא תנועות אמיתיות מהבנק וכרטיסי אשראי
+                </h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#EBF7F5] dark:bg-[#00B894]/20 text-[#00B894]">
+                  Excel / CSV
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                קריאה ישירה של קבצי תנועות מכל הבנקים וכרטיסי האשראי בישראל — ללא שום הוצאות מומצאות.
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-[#191D1E] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-2 px-5 pt-3 border-b border-[#E1E8E7] dark:border-[#2D3636] bg-gray-50/70 dark:bg-[#191D1E]/70 text-xs font-bold">
+          <button
+            onClick={() => setActiveTab('upload')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+              activeTab === 'upload'
+                ? 'border-[#00B894] text-[#00B894]'
+                : 'border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+            }`}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>העלאת קובץ Excel / CSV</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('paste')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+              activeTab === 'paste'
+                ? 'border-[#00B894] text-[#00B894]'
+                : 'border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+            }`}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>הדבקת שורות טבלה</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('guide')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 ${
+              activeTab === 'guide'
+                ? 'border-[#00B894] text-[#00B894]'
+                : 'border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+            }`}
+          >
+            <Info className="w-3.5 h-3.5" />
+            <span>איך מורידים קובץ מהבנק?</span>
+          </button>
+        </div>
+
+        {/* Content Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2 justify-between items-center">
-            <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[#00B894] hover:bg-[#00A383] text-white font-bold transition-colors shadow-xs">
-              <Upload className="w-4 h-4" />
-              <span>בחר קובץ CSV מהמחשב</span>
-              <input
-                type="file"
-                accept=".csv,.txt"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </label>
+          {/* Error Banner */}
+          {parseError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl text-rose-700 dark:text-rose-300 flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{parseError}</span>
+            </div>
+          )}
 
-            <button
-              type="button"
-              onClick={handleLoadSample}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] hover:bg-[#E1E8E7] dark:hover:bg-[#2D3636] text-[#2D3436] dark:text-white font-bold border border-[#E1E8E7] dark:border-[#2D3636] transition-colors"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#FDCB6E]" />
-              <span>טען קובץ דוגמה ישראלי</span>
-            </button>
-          </div>
+          {/* TAB 1: FILE UPLOAD */}
+          {activeTab === 'upload' && !parsedData && (
+            <div className="space-y-4">
+              <div
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${
+                  dragActive
+                    ? 'border-[#00B894] bg-[#EBF7F5]/50 dark:bg-[#00B894]/10 scale-[0.99]'
+                    : 'border-[#E1E8E7] dark:border-[#2D3636] hover:border-[#00B894] bg-[#F4F7F6]/50 dark:bg-[#191D1E]/50'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.tsv,.txt"
+                  onChange={(e) => {
+                    if (e.target.files?.[0]) {
+                      handleFileChange(e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
 
-          {/* Raw text preview area */}
-          <div>
-            <label className="block text-gray-600 dark:text-gray-400 mb-1 font-medium">
-              תוכן הקובץ (ניתן גם להדביק שורות ישירות):
-            </label>
-            <textarea
-              rows={4}
-              value={csvText}
-              onChange={(e) => {
-                setCsvText(e.target.value);
-                handleParseText(e.target.value);
-              }}
-              placeholder="הדבק כאן תוכן CSV או לחץ על 'טען קובץ דוגמה'..."
-              className="w-full p-2.5 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] font-mono text-[11px] text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
-            />
-          </div>
+                <div className="w-12 h-12 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs flex items-center justify-center text-[#00B894]">
+                  <Upload className="w-6 h-6" />
+                </div>
 
-          {/* Parsed records table preview */}
-          {parsedRows.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-[#2D3436] dark:text-white">
-                  תצוגה מקדימה: זוהו {parsedRows.length} תנועות
-                </span>
-                {duplicateCount > 0 && (
-                  <span className="text-[#D48806] dark:text-[#FDCB6E] flex items-center gap-1 font-bold text-[11px]">
-                    <AlertCircle className="w-3 h-3" />
-                    <span>{duplicateCount} תנועות זוהו ככפולות וידולגו</span>
+                <div>
+                  <p className="text-sm font-bold text-[#2D3436] dark:text-white">
+                    גרור לכאן את קובץ האקסל או ה-CSV שהורדת מהבנק
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    או לחץ כאן לבחירת קובץ מהמחשב (תמיכה מלאה ב-XLSX, XLS, CSV)
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2">
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    בנק הפועלים
                   </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    לאומי
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    דיסקונט
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    מזרחי טפחות
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    ישראכרט
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    כאל
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-gray-200/60 dark:bg-[#2D3636] text-[10px] text-gray-600 dark:text-gray-300 font-medium">
+                    מקס
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={handleLoadSample}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#00B894] hover:underline font-bold"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>רוצה לראות איך זה עובד? טען קובץ דוגמה ישראלי</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: PASTE TEXT */}
+          {activeTab === 'paste' && !parsedData && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-gray-600 dark:text-gray-300 font-bold mb-1">
+                  הדבק שורות מטבלת הבנק (תאריך, תיאור, חובה, זכות או סכום):
+                </label>
+                <textarea
+                  rows={7}
+                  value={pastedText}
+                  onChange={(e) => setPastedText(e.target.value)}
+                  placeholder="סמן את השורות באתר הבנק, לחץ Ctrl+C והדבק כאן (Ctrl+V)..."
+                  className="w-full p-3 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] font-mono text-xs text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleLoadSample}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#00B894] hover:underline font-bold"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>טען נתוני דוגמה ישראליים</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleParsePastedText}
+                  disabled={!pastedText.trim() || isProcessing}
+                  className="px-4 py-2 rounded-xl bg-[#00B894] hover:bg-[#00A382] disabled:opacity-50 text-white font-bold text-xs transition-all shadow-xs"
+                >
+                  {isProcessing ? 'מנתח שורות...' : 'נתח שורות והצג תצוגה מקדימה'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: DOWNLOAD GUIDE */}
+          {activeTab === 'guide' && !parsedData && (
+            <div className="space-y-4">
+              <div className="p-4 bg-emerald-50/60 dark:bg-[#00B894]/10 border border-emerald-200 dark:border-[#00B894]/20 rounded-2xl">
+                <h3 className="font-bold text-sm text-[#2D3436] dark:text-white mb-1 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-[#00B894]" />
+                  <span>איך מורידים קובץ תנועות מהבנק או כרטיס האשראי?</span>
+                </h3>
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  כל מוסד פיננסי בישראל מאפשר לייצא את התנועות בלחיצת כפתור אחת:
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-red-600 dark:text-red-400 block mb-1">
+                    בנק הפועלים
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    היכנס ל"עובר ושב" ← לחץ על סמל האקסל או "ייצוא לאקסל" בראש טבלת התנועות ← גרור את הקובץ לכאן.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 block mb-1">
+                    בנק לאומי
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    היכנס ל"ריכוז תנועות בעו״ש" ← לחץ על כפתור "הורדה / הדפסה" ← בחר "קובץ Excel" ← שמור וגרור לכאן.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-green-600 dark:text-green-400 block mb-1">
+                    בנק דיסקונט
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    היכנס ל"פעולות בחשבון" ← סנן את התאריכים הרצויים ← לחץ על אייקון האקסל בצד שמאל למעלה.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-orange-600 dark:text-orange-400 block mb-1">
+                    מזרחי טפחות
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    עבור ל"תנועות בחשבון" ← לחץ על "ייצוא" ובחר פורמט Excel או CSV.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-cyan-600 dark:text-cyan-400 block mb-1">
+                    ישראכרט / Cal / Max
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    היכנס לפירוט עסקאות חודשי ← לחץ על "ייצוא לאקסל" בראש עמוד הפירוט ← העלה את הקובץ לכאן.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl">
+                  <span className="font-bold text-purple-600 dark:text-purple-400 block mb-1">
+                    העתק-הדבק מהיר
+                  </span>
+                  <p className="text-gray-600 dark:text-gray-400 text-[11px]">
+                    ניתן גם פשוט לסמן את השורות עם העכבר באתר הבנק, להעתיק (Ctrl+C), לעבור ללשונית "הדבקת שורות" ולהדביק!
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PARSED DATA PREVIEW & CONFIRMATION */}
+          {parsedData && (
+            <div className="space-y-4 animate-in fade-in">
+              {/* Summary Strip */}
+              <div className="p-4 bg-gradient-to-r from-[#EBF7F5] to-emerald-50 dark:from-[#00B894]/15 dark:to-[#191D1E] rounded-2xl border border-[#00B894]/30 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-extrabold text-sm text-[#2D3436] dark:text-white">
+                      {fileName || 'קובץ תנועות'}
+                    </span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#00B894] text-white">
+                      {parsedData.detectedBank}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">
+                    זוהו <strong className="text-[#2D3436] dark:text-white">{parsedData.totalCount}</strong> תנועות אמיתיות בקובץ
+                    (הוצאות: ₪{parsedData.totalDebits.toLocaleString()} | הכנסות: ₪{parsedData.totalCredits.toLocaleString()})
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setParsedData(null);
+                      setFileName('');
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#202728] hover:bg-gray-50 text-xs font-bold transition-colors"
+                  >
+                    טען קובץ אחר
+                  </button>
+                </div>
+              </div>
+
+              {/* Target Account & Closing Balance Options */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-gray-50 dark:bg-[#191D1E] rounded-xl border border-[#E1E8E7] dark:border-[#2D3636]">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 mb-1">
+                    ייבא לחשבון / כרטיס:
+                  </label>
+                  <select
+                    value={selectedAccountId}
+                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#E1E8E7] dark:border-[#2D3636] bg-white dark:bg-[#202728] text-xs font-medium text-[#2D3436] dark:text-white outline-none focus:border-[#00B894]"
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        🏦 {a.name} ({a.bankName}) - יתרה: ₪{a.balance.toLocaleString()}
+                      </option>
+                    ))}
+                    {creditCards.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        💳 {c.name} (סיום {c.lastFourDigits})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {parsedData.closingBalance !== undefined && (
+                  <div className="flex items-center">
+                    <label className="flex items-start gap-2 cursor-pointer mt-3 sm:mt-4">
+                      <input
+                        type="checkbox"
+                        checked={shouldUpdateBalance}
+                        onChange={(e) => setShouldUpdateBalance(e.target.checked)}
+                        className="mt-0.5 accent-[#00B894] w-4 h-4 rounded"
+                      />
+                      <span className="text-xs text-[#2D3436] dark:text-white font-medium leading-tight">
+                        עדכן יתרת עו״ש לפי יתרת הסגירה בקובץ:{' '}
+                        <strong className="text-[#00B894] font-mono">
+                          ₪{parsedData.closingBalance.toLocaleString()}
+                        </strong>
+                      </span>
+                    </label>
+                  </div>
                 )}
               </div>
 
-              <div className="border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl overflow-x-auto max-h-56">
-                <table className="w-full text-right text-[11px]">
-                  <thead className="bg-[#F4F7F6] dark:bg-[#191D1E] border-b border-[#E1E8E7] dark:border-[#2D3636] text-gray-500 dark:text-gray-400">
+              {/* Duplicate Alert & Quick Actions */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#2D3436] dark:text-white">
+                    נבחרו {selectedCount} מתוך {parsedData.transactions.length} תנועות
+                  </span>
+
+                  {duplicateCount > 0 && (
+                    <span className="text-[#D6A317] dark:text-[#FDCB6E] flex items-center gap-1 font-bold">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>{duplicateCount} תנועות זוהו ככפולות</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {duplicateCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={deselectDuplicates}
+                      className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-[#D6A317] dark:text-[#FDCB6E] border border-amber-200 dark:border-amber-800 text-[11px] font-bold hover:bg-amber-100 transition-colors"
+                    >
+                      בטל סימון כפילויות
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="text-xs text-[#00B894] hover:underline font-bold"
+                  >
+                    {selectedCount === parsedData.transactions.length ? 'בטל בחירת הכל' : 'בחר הכל'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Transactions Table Preview */}
+              <div className="border border-[#E1E8E7] dark:border-[#2D3636] rounded-xl overflow-hidden max-h-72 overflow-y-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-[#F4F7F6] dark:bg-[#191D1E] border-b border-[#E1E8E7] dark:border-[#2D3636] text-gray-500 dark:text-gray-400 sticky top-0 z-10 text-[11px]">
                     <tr>
-                      <th className="py-2 px-3">תאריך</th>
-                      <th className="py-2 px-3">תיאור</th>
-                      <th className="py-2 px-3">סכום</th>
-                      <th className="py-2 px-3">סיווג אוטומטי</th>
-                      <th className="py-2 px-3">סטטוס</th>
+                      <th className="py-2.5 px-3 w-8 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedCount === parsedData.transactions.length && parsedData.transactions.length > 0}
+                          onChange={toggleSelectAll}
+                          className="accent-[#00B894] w-3.5 h-3.5 rounded"
+                        />
+                      </th>
+                      <th className="py-2.5 px-3">תאריך</th>
+                      <th className="py-2.5 px-3">בית עסק / תיאור פעולה</th>
+                      <th className="py-2.5 px-3">סכום</th>
+                      <th className="py-2.5 px-3">קטגוריה</th>
+                      <th className="py-2.5 px-3">סטטוס</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E1E8E7] dark:divide-[#2D3636]">
-                    {parsedRows.map((r, i) => (
-                      <tr
-                        key={i}
-                        className={
-                          r.isDuplicate
-                            ? 'bg-[#FDCB6E]/10 opacity-60'
-                            : 'hover:bg-[#F4F7F6]/60 dark:hover:bg-[#191D1E]/60'
-                        }
-                      >
-                        <td className="py-2 px-3 font-mono">{r.date}</td>
-                        <td className="py-2 px-3 font-medium text-[#2D3436] dark:text-white">
-                          {r.description}
-                        </td>
-                        <td
-                          className={`py-2 px-3 font-mono font-bold ${
-                            r.type === 'income' ? 'text-[#00B894]' : 'text-[#2D3436] dark:text-white'
+                    {parsedData.transactions.map((tx) => {
+                      const isSelected = selectedTxIds.has(tx.id);
+                      return (
+                        <tr
+                          key={tx.id}
+                          onClick={() => toggleSelectTx(tx.id)}
+                          className={`cursor-pointer transition-colors ${
+                            !isSelected
+                              ? 'opacity-40 bg-gray-50/50 dark:bg-[#191D1E]/50'
+                              : tx.isDuplicate
+                              ? 'bg-amber-50/50 dark:bg-amber-950/20'
+                              : 'hover:bg-[#F4F7F6]/80 dark:hover:bg-[#191D1E]/80'
                           }`}
                         >
-                          {r.type === 'income' ? '+' : '-'}₪{r.amount.toLocaleString()}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className="bg-[#EBF7F5] dark:bg-[#00B894]/20 text-[#00B894] px-2 py-0.5 rounded-md text-[10px] font-bold">
-                            {r.category || 'אחר'}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3">
-                          {r.isDuplicate ? (
-                            <span className="text-[#D48806] dark:text-[#FDCB6E] font-bold">כפולה</span>
-                          ) : (
-                            <span className="text-[#00B894] font-bold">חדשה</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectTx(tx.id)}
+                              className="accent-[#00B894] w-3.5 h-3.5 rounded"
+                            />
+                          </td>
+                          <td className="py-2 px-3 font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                            {tx.date}
+                          </td>
+                          <td className="py-2 px-3 font-medium text-[#2D3436] dark:text-white">
+                            <div>
+                              <span>{tx.description}</span>
+                              {tx.reference && (
+                                <span className="text-[10px] text-gray-400 block">
+                                  אסמכתא: {tx.reference}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td
+                            className={`py-2 px-3 font-mono font-bold whitespace-nowrap ${
+                              tx.type === 'income' ? 'text-[#00B894]' : 'text-[#2D3436] dark:text-white'
+                            }`}
+                          >
+                            {tx.type === 'income' ? '+' : '-'}₪{tx.amount.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="px-2 py-0.5 rounded-md bg-[#EBF7F5] dark:bg-[#00B894]/20 text-[#00B894] font-bold text-[10px]">
+                              {tx.category}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-[11px]">
+                            {tx.isDuplicate ? (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-[#D6A317] dark:text-amber-300 font-bold text-[10px]">
+                                כפולה
+                              </span>
+                            ) : (
+                              <span className="text-[#00B894] font-bold text-[10px]">חדשה</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -270,23 +713,34 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-[#E1E8E7] dark:border-[#2D3636] flex justify-end gap-2 bg-[#F4F7F6]/50 dark:bg-[#191D1E]/50">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] text-[#2D3436] dark:text-gray-300 font-bold text-xs hover:bg-gray-50 dark:hover:bg-[#191D1E] transition-colors"
-          >
-            ביטול
-          </button>
-          <button
-            type="button"
-            disabled={parsedRows.length === 0}
-            onClick={handleConfirmImport}
-            className="px-5 py-2 rounded-xl bg-[#00B894] hover:bg-[#00A383] disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-xs"
-          >
-            אשר וייבא {parsedRows.filter((r) => !r.isDuplicate).length} תנועות
-          </button>
+        {/* Modal Footer */}
+        <div className="p-4 border-t border-[#E1E8E7] dark:border-[#2D3636] flex flex-col sm:flex-row items-center justify-between gap-3 bg-[#F4F7F6]/60 dark:bg-[#191D1E]/60">
+          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-[#00B894] shrink-0" />
+            <span>התנועות נשמרות מקומית בדפדפן שלך בפרטיות מוחלטת.</span>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] text-[#2D3436] dark:text-gray-300 font-bold text-xs hover:bg-gray-100 dark:hover:bg-[#191D1E] transition-colors"
+            >
+              ביטול
+            </button>
+
+            {parsedData && (
+              <button
+                type="button"
+                disabled={selectedCount === 0}
+                onClick={handleConfirmImport}
+                className="px-5 py-2 rounded-xl bg-[#00B894] hover:bg-[#00A382] disabled:opacity-50 text-white font-bold text-xs transition-all shadow-xs flex items-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>ייבא {selectedCount} תנועות למערכת</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

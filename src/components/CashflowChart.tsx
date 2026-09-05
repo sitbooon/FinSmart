@@ -108,7 +108,7 @@ export const CashflowChart: React.FC<CashflowChartProps> = ({
       <div className="overflow-x-auto">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-auto min-w-[500px] overflow-visible"
+          className="w-full h-auto min-w-0 overflow-visible"
         >
           <defs>
             <linearGradient id="cashflowGrad" x1="0" y1="0" x2="0" y2="1">
@@ -253,9 +253,9 @@ export const CashflowChart: React.FC<CashflowChartProps> = ({
       {/* Floating Tooltip */}
       {activePoint && hoveredIndex !== null && (
         <div
-          className="absolute z-20 pointer-events-none bg-slate-900/95 text-white p-3 rounded-xl shadow-xl backdrop-blur-md text-xs border border-slate-700 min-w-[210px] transform -translate-x-1/2 -translate-y-full"
+          className="absolute z-20 pointer-events-none bg-slate-900/95 text-white p-3 rounded-xl shadow-xl backdrop-blur-md text-xs border border-slate-700 min-w-[190px] max-w-[280px] transform -translate-x-1/2 -translate-y-full"
           style={{
-            left: `${((getX(hoveredIndex, forecast.length) / width) * 100).toFixed(1)}%`,
+            left: `${Math.min(80, Math.max(20, (getX(hoveredIndex, forecast.length) / width) * 100)).toFixed(1)}%`,
             top: `${Math.max(10, getY(activePoint.projectedBalance) - 20)}px`,
           }}
         >

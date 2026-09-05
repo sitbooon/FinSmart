@@ -190,21 +190,21 @@ export const INITIAL_FIXED_EXPENSES: FixedExpense[] = [
 export const INITIAL_EXPECTED_INCOMES: ExpectedIncome[] = [
   {
     id: 'inc-1',
-    name: 'משכורת דניאל (הייטק)',
+    name: 'משכורת חודשית ראשית',
     amount: 17200,
     dayOfMonth: 1,
     kind: 'salary',
     isReceivedThisMonth: true,
-    recipient: 'דניאל',
+    recipient: 'משותף',
   },
   {
     id: 'inc-2',
-    name: 'משכורת מיכל (הוראה וייעוץ)',
+    name: 'משכורת חודשית משנית',
     amount: 13800,
     dayOfMonth: 10,
     kind: 'salary',
     isReceivedThisMonth: false,
-    recipient: 'מיכל',
+    recipient: 'משותף',
   },
   {
     id: 'inc-3',
@@ -213,7 +213,7 @@ export const INITIAL_EXPECTED_INCOMES: ExpectedIncome[] = [
     dayOfMonth: 20,
     kind: 'recurring',
     isReceivedThisMonth: false,
-    recipient: 'משפחה',
+    recipient: 'משותף',
   },
 ];
 
@@ -275,7 +275,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     isRecurring: false,
     isBusiness: false,
     notes: 'קנייה שבועית גדולה לבית',
-    familyMember: 'מיכל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-2',
@@ -288,19 +288,19 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-2',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'דניאל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-3',
     date: '2026-09-01',
-    description: 'משכורת דניאל - חברת טכנולוגיה בע"מ',
+    description: 'משכורת חודשית - חברת הייטק בע"מ',
     amount: 17200,
     type: 'income',
     category: 'משכורת והכנסה',
     accountId: 'acc-1',
     isRecurring: true,
     isBusiness: false,
-    familyMember: 'דניאל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-4',
@@ -325,7 +325,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-1',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'מיכל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-6',
@@ -338,7 +338,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-1',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'דניאל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-7',
@@ -352,7 +352,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     isRecurring: false,
     isBusiness: false,
     installments: { current: 1, total: 3 },
-    familyMember: 'מיכל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-8',
@@ -365,7 +365,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-2',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'מיכל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-9',
@@ -378,7 +378,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-2',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'דניאל',
+    familyMember: 'משותף',
   },
   {
     id: 'tx-10',
@@ -405,6 +405,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-1',
     isRecurring: true,
     isBusiness: false,
+    familyMember: 'משותף',
   },
   {
     id: 'tx-12',
@@ -417,6 +418,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-1',
     isRecurring: true,
     isBusiness: false,
+    familyMember: 'משותף',
   },
   {
     id: 'tx-13',
@@ -429,7 +431,7 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
     creditCardId: 'card-2',
     isRecurring: false,
     isBusiness: false,
-    familyMember: 'דניאל',
+    familyMember: 'משותף',
   },
 ];
 
@@ -614,17 +616,29 @@ export const defaultMerchantRules = INITIAL_MERCHANT_RULES;
 export const cleanAccounts: Account[] = [
   {
     id: 'acc-main',
-    name: 'חשבון עו״ש ראשי',
+    name: 'חשבון עו״ש משותף',
     type: 'checking',
     balance: 0,
     currency: '₪',
     bankName: 'בנק ישראלי',
     lastUpdated: 'טרם הוזנו תנועות',
-    notes: 'חשבון עו"ש ראשי לתנועות שוטפות',
+    notes: 'חשבון עו״ש משותף לניהול תזרים והוצאות הבית',
     isFamilyShared: true,
   },
 ];
-export const cleanCreditCards: CreditCard[] = [];
+export const cleanCreditCards: CreditCard[] = [
+  {
+    id: 'card-main',
+    name: 'כרטיס אשראי ראשי',
+    company: 'ישראכרט / Cal / Max',
+    lastFourDigits: '0000',
+    limit: 15000,
+    billingDay: 10,
+    currentBillingTotal: 0,
+    remainingInstallmentsTotal: 0,
+    linkedAccountId: 'acc-main',
+  },
+];
 export const cleanTransactions: Transaction[] = [];
 export const cleanFixedExpenses: FixedExpense[] = [];
 export const cleanExpectedIncomes: ExpectedIncome[] = [];

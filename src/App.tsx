@@ -39,6 +39,7 @@ import {
   calculateSnapshot,
   generateDailyCashflowForecast,
   detectAnomalies,
+  calculateMonthlySummaries,
 } from './utils/financeEngine';
 import { Navbar, TabType } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
@@ -54,46 +55,62 @@ import { ReportsView } from './components/ReportsView';
 import { AddTransactionModal } from './components/AddTransactionModal';
 import { CsvImportModal } from './components/CsvImportModal';
 import { DataManagementModal } from './components/DataManagementModal';
+import { QuickBalanceModal } from './components/QuickBalanceModal';
+import { AvailableMoneyExplainerModal } from './components/AvailableMoneyExplainerModal';
 
 export default function App() {
   // Theme state
   const [isDark, setIsDark] = useState<boolean>(() => {
-    return (
-      localStorage.getItem('finos_theme') === 'dark' ||
-      window.matchMedia('(prefers-color-scheme: dark)').matches
-    );
+    const saved = localStorage.getItem('finos_theme');
+    if (saved === 'dark') return true;
+    if (saved === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
       localStorage.setItem('finos_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
       localStorage.setItem('finos_theme', 'light');
     }
   }, [isDark]);
 
-  // Tab & Filter States
+  // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  const [familyMember, setFamilyMember] = useState<string>('משותף');
   const [aiCustomPrompt, setAiCustomPrompt] = useState<string>('');
+
+  // Month selection state (User requested monthly navigation)
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    return localStorage.getItem('finos_selected_month') || currentMonthKey;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('finos_selected_month', selectedMonth);
+  }, [selectedMonth]);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isDataModalOpen, setIsDataModalOpen] = useState(false);
+  const [isQuickBalanceOpen, setIsQuickBalanceOpen] = useState(false);
+  const [isAvailableExplainerOpen, setIsAvailableExplainerOpen] = useState(false);
 
-  // Check if we should switch to clean version (user asked: "תעשה לי גירסא טובה ריקה מתוכן")
+  // Check if we should switch to clean version (user asked: "תעשה לי מערכת נקייה נקייה מכל רבב")
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
     const savedDemoFlag = localStorage.getItem('finos_is_demo');
     if (savedDemoFlag !== null) {
       return savedDemoFlag === 'true';
     }
-    // If not set yet, initialize in clean mode as requested
-    const hasInitializedClean = localStorage.getItem('finos_clean_v1');
+    // Clean mode initialized by default
+    const hasInitializedClean = localStorage.getItem('finos_clean_v2');
     if (!hasInitializedClean) {
-      localStorage.setItem('finos_clean_v1', 'true');
+      localStorage.setItem('finos_clean_v2', 'true');
       localStorage.setItem('finos_is_demo', 'false');
       // Clean previous demo state from localStorage so the user sees clean version immediately
       localStorage.removeItem('finos_accounts');
@@ -211,37 +228,36 @@ export default function App() {
     merchantRules,
   ]);
 
-  // Filter transactions by selected family member if not 'משותף'
-  const memberTransactions = useMemo(() => {
-    if (familyMember === 'משותף') return transactions;
-    return transactions.filter(
-      (tx) => tx.familyMember === familyMember || tx.familyMember === 'משותף' || !tx.familyMember
-    );
-  }, [transactions, familyMember]);
+  // Monthly summaries calculation for month comparison strip
+  const monthlySummaries = useMemo(() => {
+    return calculateMonthlySummaries(transactions, selectedMonth);
+  }, [transactions, selectedMonth]);
 
   // Core Financial Engine Computations (Calculated deterministically)
   const snapshot = useMemo(() => {
     return calculateSnapshot(
       accounts,
       creditCards,
-      memberTransactions,
+      transactions,
       fixedExpenses,
       expectedIncomes,
       savingGoals,
       debts,
       investments,
-      budgets
+      budgets,
+      selectedMonth
     );
   }, [
     accounts,
     creditCards,
-    memberTransactions,
+    transactions,
     fixedExpenses,
     expectedIncomes,
     savingGoals,
     debts,
     investments,
     budgets,
+    selectedMonth,
   ]);
 
   const forecast = useMemo(() => {
@@ -302,7 +318,7 @@ export default function App() {
       });
     }
 
-    const restSpend = memberTransactions
+    const restSpend = transactions
       .filter((t) => t.category === 'מסעדות ובילויים')
       .reduce((s, t) => s + t.amount, 0);
     if (restSpend > 1000) {
@@ -335,7 +351,7 @@ export default function App() {
     });
 
     return list;
-  }, [snapshot, memberTransactions, transactions.length]);
+  }, [snapshot, transactions]);
 
   // Data state management: Clean version vs Demo version
   const handleLoadCleanState = () => {
@@ -390,8 +406,44 @@ export default function App() {
     setTransactions((prev) => [newTx, ...prev]);
   };
 
-  const handleImportCsv = (newTxs: Transaction[]) => {
-    setTransactions((prev) => [...newTxs, ...prev]);
+  const handleImportCsv = (newTxs: Transaction[], newCheckingBalance?: number) => {
+    if (newTxs.length > 0) {
+      setTransactions((prev) => [...newTxs, ...prev]);
+    }
+    if (newCheckingBalance !== undefined) {
+      handleUpdateCheckingBalance(newCheckingBalance);
+    }
+  };
+
+  const handleUpdateCheckingBalance = (newBalance: number) => {
+    setAccounts((prev) => {
+      const idx = prev.findIndex((a) => a.type === 'checking');
+      if (idx >= 0) {
+        const updated = [...prev];
+        updated[idx] = {
+          ...updated[idx],
+          balance: newBalance,
+          lastUpdated: new Date().toISOString().split('T')[0],
+        };
+        return updated;
+      }
+      if (prev.length > 0) {
+        const updated = [...prev];
+        updated[0] = {
+          ...updated[0],
+          balance: newBalance,
+          lastUpdated: new Date().toISOString().split('T')[0],
+        };
+        return updated;
+      }
+      return prev;
+    });
+  };
+
+  const handleUpdateCreditCardBill = (cardId: string, newTotal: number) => {
+    setCreditCards((prev) =>
+      prev.map((c) => (c.id === cardId ? { ...c, currentBillingTotal: newTotal } : c))
+    );
   };
 
   const handleAskAiFromInsight = (prompt: string) => {
@@ -406,8 +458,9 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         monthStatus={snapshot.monthStatus}
-        familyMember={familyMember}
-        setFamilyMember={setFamilyMember}
+        selectedMonth={selectedMonth}
+        onSelectMonth={setSelectedMonth}
+        monthlySummaries={monthlySummaries}
         onOpenAddModal={() => setIsAddModalOpen(true)}
         onOpenCsvModal={() => setIsCsvModalOpen(true)}
         onResetDemo={handleLoadDemoState}
@@ -418,12 +471,12 @@ export default function App() {
       />
 
       {/* Main Page Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-20 sm:pb-12">
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-28 sm:pb-12">
         {activeTab === 'dashboard' && (
           <DashboardView
             snapshot={snapshot}
             forecast={forecast}
-            transactions={memberTransactions}
+            transactions={transactions}
             alerts={alerts}
             onNavigate={(tab) => setActiveTab(tab)}
             onOpenAddModal={() => setIsAddModalOpen(true)}
@@ -432,6 +485,11 @@ export default function App() {
             isDemoMode={isDemoMode}
             onOpenCsvModal={() => setIsCsvModalOpen(true)}
             onOpenDataModal={() => setIsDataModalOpen(true)}
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
+            monthlySummaries={monthlySummaries}
+            onOpenQuickBalance={() => setIsQuickBalanceOpen(true)}
+            onOpenAvailableMoneyExplainer={() => setIsAvailableExplainerOpen(true)}
           />
         )}
 
@@ -449,7 +507,7 @@ export default function App() {
 
         {activeTab === 'transactions' && (
           <TransactionsView
-            transactions={memberTransactions}
+            transactions={transactions}
             setTransactions={setTransactions}
             categories={categories}
             setCategories={setCategories}
@@ -486,7 +544,7 @@ export default function App() {
           <AiAssistantView
             snapshot={snapshot}
             forecast={forecast}
-            transactions={memberTransactions}
+            transactions={transactions}
             initialPrompt={aiCustomPrompt}
             aiInsights={aiInsights}
           />
@@ -514,8 +572,11 @@ export default function App() {
             accounts={accounts}
             investments={investments}
             debts={debts}
-            transactions={memberTransactions}
+            transactions={transactions}
             creditCards={creditCards}
+            selectedMonth={selectedMonth}
+            onSelectMonth={setSelectedMonth}
+            monthlySummaries={monthlySummaries}
           />
         )}
       </main>
@@ -529,7 +590,6 @@ export default function App() {
         accounts={accounts}
         creditCards={creditCards}
         merchantRules={merchantRules}
-        activeFamilyMember={familyMember}
       />
 
       <CsvImportModal
@@ -537,6 +597,8 @@ export default function App() {
         onClose={() => setIsCsvModalOpen(false)}
         onImport={handleImportCsv}
         existingTransactions={transactions}
+        accounts={accounts}
+        creditCards={creditCards}
       />
 
       <DataManagementModal
@@ -559,6 +621,25 @@ export default function App() {
           merchantRules,
         }}
         onRestoreBackup={handleRestoreBackup}
+      />
+
+      {/* Quick Balance & Credit Card Update Modal */}
+      <QuickBalanceModal
+        isOpen={isQuickBalanceOpen}
+        onClose={() => setIsQuickBalanceOpen(false)}
+        accounts={accounts}
+        creditCards={creditCards}
+        onUpdateCheckingBalance={handleUpdateCheckingBalance}
+        onUpdateCreditCardBill={handleUpdateCreditCardBill}
+        currentAvailableMoney={snapshot.realAvailableMoney}
+      />
+
+      {/* Available Money Explainer Modal */}
+      <AvailableMoneyExplainerModal
+        isOpen={isAvailableExplainerOpen}
+        onClose={() => setIsAvailableExplainerOpen(false)}
+        breakdown={snapshot.availableMoneyBreakdown}
+        onOpenQuickBalance={() => setIsQuickBalanceOpen(true)}
       />
     </div>
   );

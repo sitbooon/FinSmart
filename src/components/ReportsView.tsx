@@ -16,45 +16,48 @@ import {
   FinancialSnapshot,
   Transaction,
   CreditCard,
+  MonthSummary,
 } from '../types';
 
 interface ReportsViewProps {
   snapshot: FinancialSnapshot;
   accounts: Account[];
-  investments: Investment[];
-  debts: Debt[];
+  investments?: Investment[];
+  debts?: Debt[];
   transactions: Transaction[];
   creditCards: CreditCard[];
+  selectedMonth?: string;
+  onSelectMonth?: (monthKey: string) => void;
+  monthlySummaries?: MonthSummary[];
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   snapshot,
   accounts,
-  investments,
-  debts,
   transactions,
   creditCards,
+  selectedMonth,
+  onSelectMonth,
+  monthlySummaries = [],
 }) => {
-  const [reportPeriod, setReportPeriod] = useState<'current_month' | 'last_month' | 'annual'>('current_month');
+  const [reportPeriod, setReportPeriod] = useState<'current_month' | 'annual'>('current_month');
 
-  // Calculate Net Worth
+  // Filter transactions according to selected month if in current_month mode
+  const displayedTransactions = React.useMemo(() => {
+    if (reportPeriod === 'annual' || !selectedMonth) {
+      return transactions;
+    }
+    return transactions.filter((t) => t.date.startsWith(selectedMonth));
+  }, [transactions, selectedMonth, reportPeriod]);
+
+  // Real financial calculations based purely on user records
   const totalBankAssets = accounts.reduce((s, a) => s + a.balance, 0);
-  const totalInvestmentAssets = investments.reduce((s, i) => s + i.currentValue, 0);
-  const estimatedRealEstateValue = 2400000; // Realistic Israeli family asset
-  const estimatedVehicleValue = 85000;
-
-  const totalAssets =
-    totalBankAssets + totalInvestmentAssets + estimatedRealEstateValue + estimatedVehicleValue;
-
-  const totalDebts = debts.reduce((s, d) => s + d.currentBalance, 0);
   const totalCreditLiabilities = creditCards.reduce((s, c) => s + c.currentBillingTotal, 0);
-  const totalLiabilities = totalDebts + totalCreditLiabilities;
-
-  const netWorth = totalAssets - totalLiabilities;
+  const netMonthlySurplus = snapshot.monthIncomeActual - snapshot.monthExpenseActual;
 
   // Monthly category breakdown
   const categoryMap: Record<string, number> = {};
-  transactions
+  displayedTransactions
     .filter((t) => t.type === 'expense')
     .forEach((t) => {
       categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount;
@@ -66,14 +69,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const handleExportCsv = () => {
     // Generate CSV in browser
     const headers = 'תאריך,תיאור,סכום,סוג,קטגוריה\n';
-    const rows = transactions
+    const rows = displayedTransactions
       .map((t) => `${t.date},"${t.description}",${t.amount},${t.type},${t.category}`)
       .join('\n');
     const blob = new Blob(['\uFEFF' + headers + rows], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `FinOS_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `FinOS_Report_${selectedMonth || new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -86,10 +89,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-[#2D3436] dark:text-white flex items-center gap-2">
             <FileBarChart2 className="w-6 h-6 text-[#00B894]" />
-            <span>שווי נקי, ניתוח ודוחות פיננסיים</span>
+            <span>דוחות תזרים וניתוח חודשי</span>
           </h1>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-            תמונת מאזן כוללת (נכסים מול התחייבויות) ופילוח הוצאות חודשי מקיף
+            סיכום הכנסות מול הוצאות, עודף תזרימי שוטף ופילוח קטגוריות על בסיס נתוני אמת
           </p>
         </div>
 
@@ -102,59 +105,61 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </button>
       </div>
 
-      {/* Net Worth Master Card */}
+      {/* Monthly Cashflow Performance Master Card */}
       <div className="p-6 sm:p-8 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#00B894]">שווי נקי כולל (Net Worth)</div>
-            <div className="text-3xl sm:text-4xl font-black text-[#2D3436] dark:text-white tracking-tight mt-1 font-mono">
-              ₪{netWorth.toLocaleString()}
+            <div className="text-xs font-bold text-[#00B894]">עודף תזרימי נטו החודש (חיסכון שוטף)</div>
+            <div className={`text-3xl sm:text-4xl font-black tracking-tight mt-1 font-mono ${
+              netMonthlySurplus >= 0 ? 'text-[#00B894]' : 'text-[#FF7675]'
+            }`}>
+              {netMonthlySurplus >= 0 ? '+' : ''}₪{netMonthlySurplus.toLocaleString()}
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              סך נכסים (עו״ש, השקעות, נדל״ן, רכב) בניכוי התחייבויות (משכנתא, הלוואות, אשראי)
+              הפרש הכנסות בפועל מול הוצאות בפועל שנרשמו החודש
             </p>
           </div>
 
           <div className="flex gap-6 text-right">
             <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">סה״כ נכסים</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">הכנסות בפועל</div>
               <div className="text-lg sm:text-xl font-black text-[#00B894] font-mono">
-                ₪{totalAssets.toLocaleString()}
+                ₪{snapshot.monthIncomeActual.toLocaleString()}
               </div>
             </div>
             <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">סה״כ התחייבויות</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">הוצאות בפועל</div>
               <div className="text-lg sm:text-xl font-black text-[#FF7675] font-mono">
-                -₪{totalLiabilities.toLocaleString()}
+                ₪{snapshot.monthExpenseActual.toLocaleString()}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Balance breakdown bars */}
+        {/* Real Cashflow Status Indicators */}
         <div className="mt-6 pt-6 border-t border-[#E1E8E7] dark:border-[#2D3636] grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
           <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
-            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">עו״ש וחיסכון נזיל</span>
+            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">יתרת עו״ש בחשבון</span>
             <span className="font-mono font-black text-[#2D3436] dark:text-white text-sm">
               ₪{totalBankAssets.toLocaleString()}
             </span>
           </div>
           <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
-            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">השקעות, גמל ופנסיה</span>
-            <span className="font-mono font-black text-[#2D3436] dark:text-white text-sm">
-              ₪{totalInvestmentAssets.toLocaleString()}
-            </span>
-          </div>
-          <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
-            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">משכנתא והלוואות</span>
-            <span className="font-mono font-black text-[#FF7675] text-sm">
-              -₪{totalDebts.toLocaleString()}
-            </span>
-          </div>
-          <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
             <span className="text-gray-500 dark:text-gray-400 block mb-0.5">חיובי אשראי קרובים</span>
             <span className="font-mono font-black text-[#FF7675] text-sm">
-              -₪{totalCreditLiabilities.toLocaleString()}
+              ₪{totalCreditLiabilities.toLocaleString()}
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
+            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">הכנסות נוספות בדרך</span>
+            <span className="font-mono font-black text-[#00B894] text-sm">
+              +₪{snapshot.pendingIncomesThisMonth.toLocaleString()}
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] border border-[#E1E8E7] dark:border-[#2D3636]">
+            <span className="text-gray-500 dark:text-gray-400 block mb-0.5">הוצאות קבועות צפויות</span>
+            <span className="font-mono font-black text-[#FF7675] text-sm">
+              -₪{snapshot.pendingFixedExpenses.toLocaleString()}
             </span>
           </div>
         </div>

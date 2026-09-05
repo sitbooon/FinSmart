@@ -1,6 +1,7 @@
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { parseTextStatement } from "../utils/bankStatementParser";
 
 dotenv.config();
 
@@ -207,88 +208,10 @@ ${JSON.stringify(financialContext, null, 2)}
   }
 });
 
-// Shared CSV parsing helper
+// Shared CSV parsing helper using the robust bank statement parser
 function parseCsvContent(csvText: string) {
-  const lines = csvText.split(/\r?\n/).filter((l: string) => l.trim().length > 0);
-  if (lines.length < 2) return [];
-
-  const categoryKeywords: Record<string, string> = {
-    שופרסל: "סופר",
-    "רמי לוי": "סופר",
-    יוחננוף: "סופר",
-    "טיב טעם": "סופר",
-    ויקטורי: "סופר",
-    "יינות ביתן": "סופר",
-    מגה: "סופר",
-    פז: "דלק",
-    סונול: "דלק",
-    דלק: "דלק",
-    "דור אלון": "דלק",
-    טן: "דלק",
-    wolt: "מסעדות",
-    "תן ביס": "מסעדות",
-    ארומה: "מסעדות",
-    מקדונלדס: "מסעדות",
-    קפה: "מסעדות",
-    netflix: "מנויים",
-    spotify: "מנויים",
-    apple: "מנויים",
-    google: "מנויים",
-    פרטנר: "סלולר",
-    סלקום: "סלולר",
-    פלאפון: "סלולר",
-    הוט: "אינטרנט",
-    בזק: "אינטרנט",
-    "חברת החשמל": "חשמל",
-    עיריית: "ארנונה",
-    ביטוח: "ביטוחים",
-    הראל: "ביטוחים",
-    מגדל: "ביטוחים",
-    כלל: "ביטוחים",
-    משכורת: "משכורת",
-    "סופר פארם": "בריאות",
-    מכבי: "בריאות",
-    כללית: "בריאות",
-    זארה: "קניות",
-    קסטרו: "קניות",
-    אמזון: "קניות",
-    איקאה: "בית",
-  };
-
-  const results = [];
-  for (let i = 1; i < lines.length; i++) {
-    const parts = lines[i].split(",").map((p: string) => p.trim().replace(/^["']|["']$/g, ""));
-    if (parts.length >= 3) {
-      const date = parts[0] || new Date().toISOString().split("T")[0];
-      const desc = parts[1] || "תנועה מיובאת";
-      const amtNum = parseFloat(parts[2].replace(/[^\d.-]/g, "")) || 0;
-
-      let detectedCat = parts[4] || "אחר";
-      if (detectedCat === "אחר") {
-        const descLower = desc.toLowerCase();
-        for (const [kw, cat] of Object.entries(categoryKeywords)) {
-          if (descLower.includes(kw.toLowerCase())) {
-            detectedCat = cat;
-            break;
-          }
-        }
-      }
-
-      results.push({
-        id: `csv-${Date.now()}-${i}`,
-        date,
-        description: desc,
-        amount: Math.abs(amtNum),
-        type: amtNum < 0 ? "expense" : desc.includes("משכורת") || amtNum > 0 ? "income" : "expense",
-        category: detectedCat,
-        subCategory: "",
-        isRecurring: false,
-        isBusiness: false,
-        notes: "יובא מקובץ CSV",
-      });
-    }
-  }
-  return results;
+  const result = parseTextStatement(csvText);
+  return result.transactions;
 }
 
 // CSV Transaction Parsing API endpoint (supports both /api/import/csv and /api/csv/parse)

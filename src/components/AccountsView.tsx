@@ -413,7 +413,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="ישראכרט Platinum דניאל"
+                  placeholder="כרטיס ישראכרט / ויזה / מאסטרקארד"
                   value={newCardName}
                   onChange={(e) => setNewCardName(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00B894]"

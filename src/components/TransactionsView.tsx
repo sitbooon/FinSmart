@@ -177,9 +177,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       )}
 
       {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs flex flex-wrap items-center justify-between gap-3">
+      <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         {/* Search */}
-        <div className="relative flex-1 min-w-[220px]">
+        <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
           <input
             type="text"
@@ -190,37 +190,38 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           />
         </div>
 
-        {/* Category filter */}
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-gray-400" />
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-3 py-2 text-xs rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white"
-          >
-            <option value="all">כל הקטגוריות</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+        {/* Category & Type filters */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+            <Filter className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full sm:w-auto px-2.5 py-2 text-xs rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white"
+            >
+              <option value="all">כל הקטגוריות</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {/* Type filter */}
           <select
             value={selectedType}
             onChange={(e: any) => setSelectedType(e.target.value)}
-            className="px-3 py-2 text-xs rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white"
+            className="flex-1 sm:flex-initial px-2.5 py-2 text-xs rounded-xl border border-[#E1E8E7] dark:border-[#2D3636] bg-[#F4F7F6] dark:bg-[#191D1E] text-[#2D3436] dark:text-white"
           >
-            <option value="all">כל התנועות</option>
-            <option value="expense">הוצאות בלבד</option>
-            <option value="income">הכנסות בלבד</option>
+            <option value="all">הכל</option>
+            <option value="expense">הוצאות</option>
+            <option value="income">הכנסות</option>
           </select>
         </div>
       </div>
 
       {/* Transactions List Table */}
-      <div className="p-5 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs">
+      <div className="p-3.5 sm:p-5 rounded-2xl bg-white dark:bg-[#202728] border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs">
         <div className="flex items-center justify-between mb-4">
           <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
             נמצאו {filtered.length} תנועות
@@ -242,28 +243,28 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               return (
                 <div
                   key={tx.id}
-                  className="py-3.5 flex flex-wrap items-center justify-between gap-3 text-xs hover:bg-[#F4F7F6] dark:hover:bg-[#191D1E]/60 px-2 rounded-xl transition-colors"
+                  className="py-3 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-3 text-xs hover:bg-[#F4F7F6] dark:hover:bg-[#191D1E]/60 px-1 sm:px-2 rounded-xl transition-colors"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
+                      className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
                         tx.type === 'income'
                           ? 'bg-[#EBF7F5] text-[#00B894] dark:bg-[#00B894]/20'
                           : 'bg-[#F4F7F6] text-gray-600 dark:bg-[#191D1E] dark:text-gray-300'
                       }`}
                     >
                       {tx.type === 'income' ? (
-                        <ArrowUpRight className="w-5 h-5 text-[#00B894]" />
+                        <ArrowUpRight className="w-4 h-4 sm:w-5 sm:h-5 text-[#00B894]" />
                       ) : (
-                        <ArrowDownRight className="w-5 h-5 text-[#FF7675]" />
+                        <ArrowDownRight className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF7675]" />
                       )}
                     </div>
 
-                    <div>
-                      <div className="font-bold text-[#2D3436] dark:text-white text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-[#2D3436] dark:text-white text-xs sm:text-sm truncate">
                         {tx.description}
                       </div>
-                      <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2 mt-0.5">
+                      <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-1.5 sm:gap-2 mt-0.5">
                         <span>{tx.date}</span>
                         <span>•</span>
 
@@ -291,11 +292,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                         ) : (
                           <button
                             onClick={() => setEditingCategoryTxId(tx.id)}
-                            className="inline-flex items-center gap-1 font-bold text-[#00B894] bg-[#EBF7F5] dark:bg-[#00B894]/20 px-2 py-0.5 rounded hover:bg-[#D7F1EC] transition-colors"
+                            className="inline-flex items-center gap-1 font-bold text-[#00B894] bg-[#EBF7F5] dark:bg-[#00B894]/20 px-2 py-0.5 rounded hover:bg-[#D7F1EC] transition-colors max-w-[120px] truncate"
                             title="לחץ לשינוי סיווג (המערכת תזכור זאת לעתיד)"
                           >
-                            <span>{tx.category}</span>
-                            <Edit2 className="w-2.5 h-2.5 opacity-60" />
+                            <span className="truncate">{tx.category}</span>
+                            <Edit2 className="w-2.5 h-2.5 opacity-60 shrink-0" />
                           </button>
                         )}
 
@@ -315,20 +316,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           </span>
                         )}
 
-                        {tx.familyMember && (
-                          <span className="bg-[#F4F7F6] dark:bg-[#191D1E] px-1.5 py-0.2 rounded text-[10px] text-gray-600 dark:text-gray-400">
-                            {tx.familyMember}
-                          </span>
-                        )}
-
-                        {tx.notes && <span className="italic text-gray-400">"{tx.notes}"</span>}
+                        {tx.notes && <span className="italic text-gray-400 hidden sm:inline">"{tx.notes}"</span>}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                     <div
-                      className={`font-mono font-black text-base ${
+                      className={`font-mono font-black text-xs sm:text-base ${
                         tx.type === 'income' ? 'text-[#00B894]' : 'text-[#2D3436] dark:text-white'
                       }`}
                     >
@@ -337,10 +332,10 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
                     <button
                       onClick={() => handleDelete(tx.id)}
-                      className="text-gray-400 hover:text-[#FF7675] p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#191D1E] transition-colors"
+                      className="text-gray-400 hover:text-[#FF7675] p-1 sm:p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#191D1E] transition-colors"
                       title="מחק תנועה"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
                   </div>
                 </div>

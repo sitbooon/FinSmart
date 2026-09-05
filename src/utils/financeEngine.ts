@@ -11,7 +11,58 @@ import {
   DayForecast,
   WhatIfScenario,
   Budget,
+  MonthSummary,
 } from '../types';
+
+export const HEBREW_MONTH_NAMES = [
+  'ינואר',
+  'פברואר',
+  'מרץ',
+  'אפריל',
+  'מאי',
+  'יוני',
+  'יולי',
+  'אוגוסט',
+  'ספטמבר',
+  'אוקטובר',
+  'נובמבר',
+  'דצמבר',
+];
+
+export const HEBREW_MONTH_SHORT = [
+  'ינו׳',
+  'פבר׳',
+  'מרץ',
+  'אפר׳',
+  'מאי',
+  'יוני',
+  'יולי',
+  'אוג׳',
+  'ספט׳',
+  'אוק׳',
+  'נוב׳',
+  'דצמ׳',
+];
+
+export function getHebrewMonthLabel(monthKey: string): string {
+  if (typeof monthKey !== 'string' || !monthKey.includes('-')) return '';
+  const parts = monthKey.split('-');
+  if (parts.length !== 2) return monthKey;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const name = HEBREW_MONTH_NAMES[month - 1] || monthKey;
+  return `${name} ${year}`;
+}
+
+export function getHebrewMonthShort(monthKey: string): string {
+  if (typeof monthKey !== 'string' || !monthKey.includes('-')) return '';
+  const parts = monthKey.split('-');
+  if (parts.length !== 2) return monthKey;
+  const year = parts[0].slice(2);
+  const month = parseInt(parts[1], 10);
+  const name = HEBREW_MONTH_SHORT[month - 1] || monthKey;
+  return `${name} ${year}`;
+}
 
 export function calculateSnapshot(
   accounts: Account[],
@@ -23,6 +74,7 @@ export function calculateSnapshot(
   debts: Debt[] = [],
   investments: Investment[] = [],
   budgets: Budget[] = [],
+  selectedMonthKey?: string,
   currentDate: any = new Date()
 ): FinancialSnapshot {
   const safeDate =
@@ -32,25 +84,46 @@ export function calculateSnapshot(
       ? new Date(currentDate)
       : new Date();
 
-  const currentDay = safeDate.getDate();
-  const currentYear = safeDate.getFullYear();
-  const currentMonth = safeDate.getMonth() + 1; // 1-12
-  const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-  const daysRemaining = Math.max(1, daysInMonth - currentDay + 1);
+  const realTodayYear = safeDate.getFullYear();
+  const realTodayMonth = safeDate.getMonth() + 1; // 1-12
+  const realTodayDay = safeDate.getDate();
+
+  // Target month resolution
+  const activeMonthKey =
+    typeof selectedMonthKey === 'string' && selectedMonthKey.includes('-')
+      ? selectedMonthKey
+      : `${realTodayYear}-${String(realTodayMonth).padStart(2, '0')}`;
+  const [targetYearStr, targetMonthStr] = activeMonthKey.split('-');
+  const targetYear = parseInt(targetYearStr, 10) || realTodayYear;
+  const targetMonth = parseInt(targetMonthStr, 10) || realTodayMonth;
+
+  const isCurrentCalendarMonth = targetYear === realTodayYear && targetMonth === realTodayMonth;
+  const isPastMonth =
+    targetYear < realTodayYear || (targetYear === realTodayYear && targetMonth < realTodayMonth);
+  const isFutureMonth =
+    targetYear > realTodayYear || (targetYear === realTodayYear && targetMonth > realTodayMonth);
+
+  const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+  const currentDay = isCurrentCalendarMonth ? realTodayDay : isPastMonth ? daysInMonth : 1;
+  const daysRemaining = isCurrentCalendarMonth
+    ? Math.max(1, daysInMonth - currentDay + 1)
+    : isPastMonth
+    ? 1
+    : daysInMonth;
 
   // 1. Current liquid checking balance
   const checkingAccounts = accounts.filter((a) => a.type === 'checking');
   const currentCheckingBalance = checkingAccounts.reduce((sum, a) => sum + a.balance, 0);
 
-  // 2. Month actual income & expense
+  // 2. Month actual income & expense for the SELECTED month
   let monthIncomeActual = 0;
   let monthExpenseActual = 0;
   const categorySpendMap: Record<string, number> = {};
 
-  const currentMonthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+  const targetMonthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
   for (const tx of transactions) {
-    if (tx.date.startsWith(currentMonthPrefix)) {
+    if (tx.date.startsWith(targetMonthPrefix)) {
       if (tx.type === 'income') {
         monthIncomeActual += tx.amount;
       } else {
@@ -60,31 +133,71 @@ export function calculateSnapshot(
     }
   }
 
-  // 3. Pending incomes this month (after today or unreceived)
-  const pendingIncomesThisMonth = expectedIncomes
-    .filter((inc) => !inc.isReceivedThisMonth && inc.dayOfMonth >= currentDay)
-    .reduce((sum, inc) => sum + inc.amount, 0);
+  // 3. Pending incomes this month
+  let pendingIncomesThisMonth = 0;
+  if (isCurrentCalendarMonth) {
+    pendingIncomesThisMonth = expectedIncomes
+      .filter((inc) => !inc.isReceivedThisMonth && inc.dayOfMonth >= currentDay)
+      .reduce((sum, inc) => sum + inc.amount, 0);
+  } else if (isFutureMonth) {
+    pendingIncomesThisMonth = expectedIncomes.reduce((sum, inc) => sum + inc.amount, 0);
+  } else {
+    // Past month: already finished, no pending incomes
+    pendingIncomesThisMonth = 0;
+  }
 
-  // 4. Pending fixed expenses this month (after today or unpaid)
-  const pendingFixedExpenses = fixedExpenses
-    .filter((fe) => !fe.isPaidThisMonth && fe.dayOfMonth >= currentDay)
-    .reduce((sum, fe) => sum + fe.amount, 0);
+  // 4. Pending fixed expenses this month
+  let pendingFixedExpenses = 0;
+  if (isCurrentCalendarMonth) {
+    pendingFixedExpenses = fixedExpenses
+      .filter((fe) => !fe.isPaidThisMonth && fe.dayOfMonth >= currentDay)
+      .reduce((sum, fe) => sum + fe.amount, 0);
+  } else if (isFutureMonth) {
+    pendingFixedExpenses = fixedExpenses.reduce((sum, fe) => sum + fe.amount, 0);
+  } else {
+    pendingFixedExpenses = 0;
+  }
 
-  // 5. Upcoming Credit card bills
-  const upcomingCreditCardBills = creditCards.reduce((sum, c) => sum + c.currentBillingTotal, 0);
+  // 5. Dynamic Credit card bills calculation
+  // Sum of credit card expenses in this month
+  const creditCardTxTotal = transactions
+    .filter(
+      (tx) =>
+        tx.type === 'expense' &&
+        tx.date.startsWith(targetMonthPrefix) &&
+        (tx.paymentMethod === 'credit_card' || !!tx.creditCardId)
+    )
+    .reduce((sum, tx) => sum + tx.amount, 0);
+
+  // For current calendar month: take either explicit billing total from cards or the transactions sum (whichever is higher)
+  const manualCardBills = isCurrentCalendarMonth
+    ? creditCards.reduce((sum, c) => sum + c.currentBillingTotal, 0)
+    : 0;
+  const upcomingCreditCardBills = Math.max(manualCardBills, creditCardTxTotal);
 
   // 6. Real Available Money formula:
-  // Current Checking + Expected Incomes - Credit Card Charges - Pending Fixed Expenses
-  const realAvailableMoney = Math.round(
-    currentCheckingBalance + pendingIncomesThisMonth - upcomingCreditCardBills - pendingFixedExpenses
-  );
+  // For current month: Current Checking + Expected Incomes - Credit Card Charges - Pending Fixed Expenses
+  // For past month: Actual net surplus/savings achieved in that month
+  // For future month: Expected Incomes - Expected Expenses
+  let realAvailableMoney: number;
+  if (isPastMonth) {
+    realAvailableMoney = Math.round(monthIncomeActual - monthExpenseActual);
+  } else if (isFutureMonth) {
+    const plannedExp = fixedExpenses.reduce((s, f) => s + f.amount, 0);
+    realAvailableMoney = Math.round(pendingIncomesThisMonth - plannedExp);
+  } else {
+    realAvailableMoney = Math.round(
+      currentCheckingBalance + pendingIncomesThisMonth - upcomingCreditCardBills - pendingFixedExpenses
+    );
+  }
 
-  // 7. Estimated daily variable spending based on remaining budget or past days
+  // 7. Estimated daily variable spending based on remaining days
   const dailyRecommendedBudget = Math.max(0, Math.round(realAvailableMoney / daysRemaining));
 
   // 8. Projected End of Month Balance
-  // Assume baseline prudent daily spending of dailyRecommendedBudget * daysRemaining, or what remains
-  const projectedEndOfMonthBalance = Math.round(realAvailableMoney);
+  const projectedEndOfMonthBalance = isPastMonth
+    ? Math.round(monthIncomeActual - monthExpenseActual)
+    : Math.round(realAvailableMoney);
 
   // 9. Month Health Status
   let monthStatus: 'good' | 'warning' | 'danger' = 'good';
@@ -97,7 +210,16 @@ export function calculateSnapshot(
 
   if (isBrandNewCleanState) {
     monthStatus = 'good';
-    statusExplanation = 'גרסה נקייה מוכנה להזנה — הזינו יתרת עו״ש ראשונית כדי להתחיל לנהל תזרים.';
+    statusExplanation = 'גרסה נקייה מוכנה להזנה — הזינו יתרת עו״ש או בצעו סנכרון בנקאי אונליין.';
+  } else if (isPastMonth) {
+    const net = monthIncomeActual - monthExpenseActual;
+    if (net >= 0) {
+      monthStatus = 'good';
+      statusExplanation = `החודש הסתיים בהצלחה עם עודף תזרימי של ₪${net.toLocaleString()}.`;
+    } else {
+      monthStatus = 'danger';
+      statusExplanation = `החודש הסתיים בגירעון תזרימי של ₪${Math.abs(net).toLocaleString()}.`;
+    }
   } else if (realAvailableMoney < 0) {
     monthStatus = 'danger';
     statusExplanation = 'זהירות: גירעון צפוי בתזרים עקב חיובי אשראי והוצאות קבועות שעולות על היתרה.';
@@ -107,8 +229,10 @@ export function calculateSnapshot(
   }
 
   // 10. Financial Score (0 - 100)
-  // Sub-scores: Cashflow (0-30), Savings (0-25), Budget Control (0-25), Debt Health (0-20)
-  const cashflowScore = Math.min(30, Math.max(0, Math.round(realAvailableMoney > 0 ? 25 + Math.min(5, realAvailableMoney / 1000) : 10)));
+  const cashflowScore = Math.min(
+    30,
+    Math.max(0, Math.round(realAvailableMoney > 0 ? 25 + Math.min(5, realAvailableMoney / 1000) : 10))
+  );
   const totalSaved = savingGoals.reduce((s, g) => s + g.currentAmount, 0);
   const totalTarget = savingGoals.reduce((s, g) => s + g.targetAmount, 0) || 1;
   const savingsScore = Math.min(25, Math.round((totalSaved / totalTarget) * 25));
@@ -123,13 +247,16 @@ export function calculateSnapshot(
   const debtToIncome = totalDebtMonthly / totalExpectedMonthlyIncome;
   const debtHealthScore = debtToIncome < 0.25 ? 20 : debtToIncome < 0.4 ? 14 : 8;
 
-  const financialScore = Math.min(100, Math.max(10, cashflowScore + savingsScore + budgetControlScore + debtHealthScore));
+  const financialScore = Math.min(
+    100,
+    Math.max(10, cashflowScore + savingsScore + budgetControlScore + debtHealthScore)
+  );
 
   // 11. Net worth
   const totalAssets =
     accounts.reduce((s, a) => s + a.balance, 0) +
     investments.reduce((s, i) => s + i.currentValue, 0);
-  const totalDebts = debts.reduce((s, d) => s + d.totalRemaining, 0);
+  const totalDebts = debts.reduce((s, d) => s + (d.currentBalance || d.totalRemaining || 0), 0);
   const netWorth = totalAssets - totalDebts;
 
   // 12. Top Expense Categories
@@ -143,7 +270,17 @@ export function calculateSnapshot(
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
 
+  const availableMoneyBreakdown = {
+    currentCheckingBalance,
+    pendingIncomesThisMonth,
+    upcomingCreditCardBills,
+    pendingFixedExpenses,
+    realAvailableMoney,
+  };
+
   return {
+    selectedMonth: activeMonthKey,
+    selectedMonthLabel: getHebrewMonthLabel(activeMonthKey),
     currentCheckingBalance,
     realAvailableMoney,
     projectedEndOfMonthBalance,
@@ -166,7 +303,72 @@ export function calculateSnapshot(
     totalDebts,
     netWorth,
     topExpenseCategories,
+    availableMoneyBreakdown,
   };
+}
+
+/**
+ * Calculates a multi-month summary breakdown (e.g. past 6 months + future 1 month)
+ * for monthly navigation and income vs expense comparisons.
+ */
+export function calculateMonthlySummaries(
+  transactions: Transaction[] = [],
+  centerMonthKey?: string,
+  monthsBack: number = 5,
+  monthsForward: number = 1
+): MonthSummary[] {
+  const now = new Date();
+  const baseKey =
+    typeof centerMonthKey === 'string' && centerMonthKey.includes('-')
+      ? centerMonthKey
+      : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [baseYearStr, baseMonthStr] = baseKey.split('-');
+  const baseYear = parseInt(baseYearStr, 10) || now.getFullYear();
+  const baseMonth = parseInt(baseMonthStr, 10) || (now.getMonth() + 1); // 1-12
+
+  const currentCalKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const list: MonthSummary[] = [];
+
+  for (let i = -monthsBack; i <= monthsForward; i++) {
+    const targetDate = new Date(baseYear, baseMonth - 1 + i, 1);
+    const year = targetDate.getFullYear();
+    const month = targetDate.getMonth() + 1;
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+    let income = 0;
+    let expense = 0;
+    let transactionCount = 0;
+
+    for (const tx of transactions) {
+      if (tx.date.startsWith(monthKey)) {
+        transactionCount++;
+        if (tx.type === 'income') {
+          income += tx.amount;
+        } else {
+          expense += tx.amount;
+        }
+      }
+    }
+
+    const net = income - expense;
+    const savingsRate = income > 0 ? Math.round((net / income) * 100) : 0;
+
+    list.push({
+      monthKey,
+      year,
+      month,
+      label: getHebrewMonthLabel(monthKey),
+      shortLabel: getHebrewMonthShort(monthKey),
+      income,
+      expense,
+      net,
+      savingsRate,
+      transactionCount,
+      isCurrentMonth: monthKey === currentCalKey,
+    });
+  }
+
+  return list;
 }
 
 export function generateDailyCashflowForecast(
