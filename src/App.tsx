@@ -34,6 +34,7 @@ import {
   SavingGoal,
   Debt,
   Investment,
+  DeletedTransaction,
 } from './types';
 import {
   calculateSnapshot,
@@ -57,6 +58,8 @@ import { CsvImportModal } from './components/CsvImportModal';
 import { DataManagementModal } from './components/DataManagementModal';
 import { QuickBalanceModal } from './components/QuickBalanceModal';
 import { AvailableMoneyExplainerModal } from './components/AvailableMoneyExplainerModal';
+import { DeletedTransactionsModal } from './components/DeletedTransactionsModal';
+import { UndoToast } from './components/UndoToast';
 
 export default function App() {
   // Theme state
@@ -100,6 +103,15 @@ export default function App() {
   const [isDataModalOpen, setIsDataModalOpen] = useState(false);
   const [isQuickBalanceOpen, setIsQuickBalanceOpen] = useState(false);
   const [isAvailableExplainerOpen, setIsAvailableExplainerOpen] = useState(false);
+  const [isDeletedModalOpen, setIsDeletedModalOpen] = useState(false);
+
+  // Deleted transactions history & Undo Toast state (Safe delete / Undo)
+  const [deletedTransactions, setDeletedTransactions] = useState<DeletedTransaction[]>(() => {
+    const saved = localStorage.getItem('finos_deleted_transactions');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeUndoTx, setActiveUndoTx] = useState<Transaction | null>(null);
+  const [toastNotification, setToastNotification] = useState<string | null>(null);
 
   // Check if we should switch to clean version (user asked: "תעשה לי מערכת נקייה נקייה מכל רבב")
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
@@ -214,6 +226,7 @@ export default function App() {
     localStorage.setItem('finos_debts', JSON.stringify(debts));
     localStorage.setItem('finos_investments', JSON.stringify(investments));
     localStorage.setItem('finos_rules', JSON.stringify(merchantRules));
+    localStorage.setItem('finos_deleted_transactions', JSON.stringify(deletedTransactions));
   }, [
     accounts,
     creditCards,
@@ -226,6 +239,7 @@ export default function App() {
     debts,
     investments,
     merchantRules,
+    deletedTransactions,
   ]);
 
   // Monthly summaries calculation for month comparison strip
@@ -368,6 +382,8 @@ export default function App() {
     setDebts(cleanDebts);
     setInvestments(cleanInvestments);
     setMerchantRules(cleanMerchantRules);
+    setDeletedTransactions([]);
+    localStorage.removeItem('finos_deleted_transactions');
   };
 
   const handleLoadDemoState = () => {
@@ -398,9 +414,84 @@ export default function App() {
     if (data.debts) setDebts(data.debts);
     if (data.investments) setInvestments(data.investments);
     if (data.merchantRules) setMerchantRules(data.merchantRules);
+    if (data.deletedTransactions) setDeletedTransactions(data.deletedTransactions);
     setIsDemoMode(false);
     localStorage.setItem('finos_is_demo', 'false');
   };
+
+  // Transactions deletion & restore logic
+  const handleDeleteTransaction = (id: string) => {
+    const tx = transactions.find((t) => t.id === id);
+    if (!tx) return;
+
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    const newDeleted: DeletedTransaction = {
+      transaction: tx,
+      deletedAt: new Date().toISOString(),
+    };
+    setDeletedTransactions((prev) => [newDeleted, ...prev]);
+    setActiveUndoTx(tx);
+    setToastNotification(null);
+  };
+
+  const handleRestoreTransaction = (txToRestore: Transaction) => {
+    setTransactions((prev) => {
+      if (prev.some((t) => t.id === txToRestore.id)) return prev;
+      return [txToRestore, ...prev];
+    });
+    setDeletedTransactions((prev) => prev.filter((d) => d.transaction.id !== txToRestore.id));
+    setActiveUndoTx(null);
+    setToastNotification(`התנועה "${txToRestore.description}" שוחזרה בהצלחה`);
+  };
+
+  const handleRestoreAllDeleted = () => {
+    if (deletedTransactions.length === 0) return;
+    const toRestore = deletedTransactions.map((d) => d.transaction);
+    setTransactions((prev) => {
+      const existingIds = new Set(prev.map((t) => t.id));
+      const newOnes = toRestore.filter((t) => !existingIds.has(t.id));
+      return [...newOnes, ...prev];
+    });
+    setDeletedTransactions([]);
+    setActiveUndoTx(null);
+    setToastNotification(`${toRestore.length} תנועות שוחזרו בהצלחה`);
+  };
+
+  const handlePermanentlyDelete = (txId: string) => {
+    setDeletedTransactions((prev) => prev.filter((d) => d.transaction.id !== txId));
+    if (activeUndoTx?.id === txId) {
+      setActiveUndoTx(null);
+    }
+  };
+
+  const handleClearTrash = () => {
+    setDeletedTransactions([]);
+    setActiveUndoTx(null);
+    setToastNotification('סל השחזור רוקן לצמיתות');
+  };
+
+  // Keyboard shortcut: Ctrl+Z / Cmd+Z to undo last deleted transaction
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        const activeEl = document.activeElement;
+        const isInput =
+          activeEl &&
+          (activeEl.tagName === 'INPUT' ||
+            activeEl.tagName === 'TEXTAREA' ||
+            (activeEl as HTMLElement).isContentEditable);
+        if (isInput) return;
+
+        if (deletedTransactions.length > 0) {
+          e.preventDefault();
+          const mostRecent = deletedTransactions[0].transaction;
+          handleRestoreTransaction(mostRecent);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [deletedTransactions]);
 
   const handleAddTransaction = (newTx: Transaction) => {
     setTransactions((prev) => [newTx, ...prev]);
@@ -516,6 +607,10 @@ export default function App() {
             merchantRules={merchantRules}
             setMerchantRules={setMerchantRules}
             onOpenAddModal={() => setIsAddModalOpen(true)}
+            deletedTransactions={deletedTransactions}
+            onDeleteTransaction={handleDeleteTransaction}
+            onOpenTrashBin={() => setIsDeletedModalOpen(true)}
+            onRestoreTransaction={handleRestoreTransaction}
           />
         )}
 
@@ -619,6 +714,7 @@ export default function App() {
           debts,
           investments,
           merchantRules,
+          deletedTransactions,
         }}
         onRestoreBackup={handleRestoreBackup}
       />
@@ -640,6 +736,34 @@ export default function App() {
         onClose={() => setIsAvailableExplainerOpen(false)}
         breakdown={snapshot.availableMoneyBreakdown}
         onOpenQuickBalance={() => setIsQuickBalanceOpen(true)}
+      />
+
+      {/* Deleted Transactions Recycle Bin Modal */}
+      <DeletedTransactionsModal
+        isOpen={isDeletedModalOpen}
+        onClose={() => setIsDeletedModalOpen(false)}
+        deletedTransactions={deletedTransactions}
+        onRestore={handleRestoreTransaction}
+        onRestoreAll={handleRestoreAllDeleted}
+        onPermanentlyDelete={handlePermanentlyDelete}
+        onClearTrash={handleClearTrash}
+      />
+
+      {/* Undo Toast Floating Notification */}
+      <UndoToast
+        transaction={activeUndoTx}
+        notificationMessage={toastNotification}
+        onUndo={() => {
+          if (activeUndoTx) {
+            handleRestoreTransaction(activeUndoTx);
+          }
+        }}
+        onDismiss={() => {
+          setActiveUndoTx(null);
+          setToastNotification(null);
+        }}
+        onOpenTrashBin={() => setIsDeletedModalOpen(true)}
+        deletedCount={deletedTransactions.length}
       />
     </div>
   );

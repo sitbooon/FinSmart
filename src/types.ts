@@ -52,6 +52,11 @@ export interface Transaction {
   familyMember?: string;
 }
 
+export interface DeletedTransaction {
+  transaction: Transaction;
+  deletedAt: string;
+}
+
 export interface Category {
   id: string;
   name: string;

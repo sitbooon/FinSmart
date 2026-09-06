@@ -13,12 +13,14 @@ import {
   AlertCircle,
   CreditCard as CardIcon,
   Check,
+  RotateCcw,
 } from 'lucide-react';
 import {
   Transaction,
   Category,
   Account,
   CreditCard,
+  DeletedTransaction,
 } from '../types';
 
 interface TransactionsViewProps {
@@ -31,6 +33,9 @@ interface TransactionsViewProps {
   merchantRules: Record<string, string>;
   setMerchantRules: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onOpenAddModal: () => void;
+  deletedTransactions?: DeletedTransaction[];
+  onDeleteTransaction?: (id: string) => void;
+  onOpenTrashBin?: () => void;
 }
 
 export const TransactionsView: React.FC<TransactionsViewProps> = ({
@@ -43,6 +48,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   merchantRules,
   setMerchantRules,
   onOpenAddModal,
+  deletedTransactions = [],
+  onDeleteTransaction,
+  onOpenTrashBin,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -63,7 +71,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   });
 
   const handleDelete = (id: string) => {
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    if (onDeleteTransaction) {
+      onDeleteTransaction(id);
+    } else {
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+    }
   };
 
   const handleQuickChangeCategory = (tx: Transaction, newCat: string) => {
@@ -113,7 +125,18 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {deletedTransactions.length > 0 && onOpenTrashBin && (
+            <button
+              onClick={onOpenTrashBin}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 text-amber-800 dark:text-amber-300 text-xs font-bold border border-amber-200/80 dark:border-amber-800 transition-colors shadow-2xs group"
+              title="צפייה ושחזור תנועות שנמחקו"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:-rotate-45 transition-transform" />
+              <span>סל שחזור ({deletedTransactions.length})</span>
+            </button>
+          )}
+
           <button
             onClick={() => setShowCategoryManager(!showCategoryManager)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#F4F7F6] dark:bg-[#191D1E] hover:bg-[#E1E8E7] dark:hover:bg-[#2D3636] text-[#2D3436] dark:text-gray-200 text-xs font-bold border border-[#E1E8E7] dark:border-[#2D3636] transition-colors"
@@ -333,7 +356,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     <button
                       onClick={() => handleDelete(tx.id)}
                       className="text-gray-400 hover:text-[#FF7675] p-1 sm:p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#191D1E] transition-colors"
-                      title="מחק תנועה"
+                      title="מחק תנועה (ניתן לבטל ולשחזר בקלות)"
                     >
                       <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
