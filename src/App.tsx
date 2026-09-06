@@ -266,6 +266,17 @@ export default function App() {
   });
   const [excelSaveStatus, setExcelSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
 
+  // Server Excel Master Database State
+  const [isServerDbLoaded, setIsServerDbLoaded] = useState(false);
+  const [serverFileInfo, setServerFileInfo] = useState<{
+    name: string;
+    path: string;
+    size?: number;
+    lastModified?: string;
+  } | null>(null);
+  const lastServerUpdateIsoRef = useRef<string | null>(null);
+  const isSyncingServerExcelRef = useRef(false);
+
   // Excel Snapshot memoized
   const excelDatabaseSnapshot = useMemo<ExcelDatabaseData>(() => ({
     accounts,
@@ -291,20 +302,29 @@ export default function App() {
 
   // Sync state to Server-side Excel Database and to connected local file
   const syncToExcelServerAndFile = async (dataToSync: ExcelDatabaseData) => {
+    if (!isServerDbLoaded || isSyncingServerExcelRef.current) return;
     setExcelSaveStatus('saving');
     try {
-      // 1. Post to Express server which saves to data/finos_database.json and generates data/finos_database.xlsx
-      fetch('/api/database/state', {
+      // 1. Post to Express server which writes directly to data/finos_database.xlsx on the server
+      const res = await fetch('/api/database/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: dataToSync }),
-      }).catch((e) => console.warn('Server database post warning:', e));
+      });
+      if (res.ok) {
+        const json = await res.json();
+        lastServerUpdateIsoRef.current = json.updatedAt;
+        if (json.fileInfo) setServerFileInfo(json.fileInfo);
+        setLastSyncedAt(new Date(json.updatedAt));
+        setExcelSaveStatus('saved');
+      } else {
+        setExcelSaveStatus('error');
+      }
 
       // 2. If user linked a local Excel file directly on their computer/Drive
       if (localExcelHandle) {
         await writeDataToLocalExcelHandle(localExcelHandle, dataToSync);
       }
-      setExcelSaveStatus('saved');
     } catch (err) {
       console.warn('Excel database sync notice:', err);
       setExcelSaveStatus('error');
@@ -356,37 +376,134 @@ export default function App() {
     deletedTransactions,
   ]);
 
-  // Initial cross-browser database bootstrap from server if local storage is blank
+  // Primary Bootstrap: Pull master data directly from server Excel file (finos_database.xlsx)
   useEffect(() => {
-    const fetchServerDatabase = async () => {
+    const fetchServerExcelDatabase = async () => {
+      try {
+        setIsSyncing(true);
+        const res = await fetch('/api/database/state');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.exists && json.data) {
+            const sData = json.data;
+            lastServerUpdateIsoRef.current = json.updatedAt;
+            if (json.fileInfo) setServerFileInfo(json.fileInfo);
+
+            const serverHasTxs = Array.isArray(sData.transactions) && sData.transactions.length > 0;
+            const localSavedTxs = localStorage.getItem('finos_transactions');
+            let localHasTxs = false;
+            try {
+              if (localSavedTxs) {
+                const parsedLocal = JSON.parse(localSavedTxs);
+                localHasTxs = Array.isArray(parsedLocal) && parsedLocal.length > 0;
+              }
+            } catch (e) {
+              // ignore
+            }
+
+            if (serverHasTxs) {
+              // Server's Excel file is the source of truth!
+              isSyncingServerExcelRef.current = true;
+              setTransactions(sData.transactions);
+              if (sData.accounts && sData.accounts.length > 0) setAccounts(sData.accounts);
+              if (sData.creditCards && sData.creditCards.length > 0) setCreditCards(sData.creditCards);
+              if (sData.budgets && sData.budgets.length > 0) setBudgets(sData.budgets);
+              if (sData.fixedExpenses && sData.fixedExpenses.length > 0) setFixedExpenses(sData.fixedExpenses);
+              if (sData.expectedIncomes && sData.expectedIncomes.length > 0) setExpectedIncomes(sData.expectedIncomes);
+              if (sData.savingGoals && sData.savingGoals.length > 0) setSavingGoals(sData.savingGoals);
+              if (sData.debts && sData.debts.length > 0) setDebts(sData.debts);
+              if (sData.investments && sData.investments.length > 0) setInvestments(sData.investments);
+              setLastSyncedAt(new Date(json.updatedAt || Date.now()));
+              setTimeout(() => {
+                isSyncingServerExcelRef.current = false;
+              }, 400);
+            } else if (localHasTxs && localSavedTxs) {
+              // Local has existing data while server is empty: populate server Excel file!
+              const localTxs = JSON.parse(localSavedTxs);
+              setTransactions(localTxs);
+              fetch('/api/database/state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  data: {
+                    accounts,
+                    creditCards,
+                    transactions: localTxs,
+                    fixedExpenses,
+                    expectedIncomes,
+                    budgets,
+                    savingGoals,
+                    debts,
+                    investments,
+                  },
+                }),
+              }).catch((e) => console.warn('Bootstrap server Excel error:', e));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not bootstrap server database:', e);
+      } finally {
+        setIsServerDbLoaded(true);
+        setIsSyncing(false);
+      }
+    };
+
+    fetchServerExcelDatabase();
+  }, []);
+
+  // Live Cross-device / Multi-tab sync: Periodically check and poll server Excel file
+  useEffect(() => {
+    if (!isServerDbLoaded) return;
+
+    const pollServerUpdates = async () => {
       try {
         const res = await fetch('/api/database/state');
         if (!res.ok) return;
         const json = await res.json();
-        if (json.exists && json.data) {
-          const sData = json.data;
-          // If local transactions are empty (e.g. fresh browser Y), load from server!
-          setTransactions((prev) => {
-            if (prev.length === 0 && sData.transactions && sData.transactions.length > 0) {
-              return sData.transactions;
-            }
-            return prev;
-          });
-          setAccounts((prev) => (prev.length === 0 && sData.accounts?.length ? sData.accounts : prev));
-          setCreditCards((prev) => (prev.length === 0 && sData.creditCards?.length ? sData.creditCards : prev));
-          setBudgets((prev) => (prev.length === 0 && sData.budgets?.length ? sData.budgets : prev));
-          setFixedExpenses((prev) => (prev.length === 0 && sData.fixedExpenses?.length ? sData.fixedExpenses : prev));
-          setExpectedIncomes((prev) => (prev.length === 0 && sData.expectedIncomes?.length ? sData.expectedIncomes : prev));
-          setSavingGoals((prev) => (prev.length === 0 && sData.savingGoals?.length ? sData.savingGoals : prev));
-          setDebts((prev) => (prev.length === 0 && sData.debts?.length ? sData.debts : prev));
-          setInvestments((prev) => (prev.length === 0 && sData.investments?.length ? sData.investments : prev));
+        if (json.exists && json.data && json.updatedAt) {
+          if (lastServerUpdateIsoRef.current && json.updatedAt !== lastServerUpdateIsoRef.current) {
+            isSyncingServerExcelRef.current = true;
+            lastServerUpdateIsoRef.current = json.updatedAt;
+            const sData = json.data;
+            if (Array.isArray(sData.transactions)) setTransactions(sData.transactions);
+            if (sData.accounts?.length) setAccounts(sData.accounts);
+            if (sData.creditCards?.length) setCreditCards(sData.creditCards);
+            if (sData.budgets?.length) setBudgets(sData.budgets);
+            if (sData.fixedExpenses?.length) setFixedExpenses(sData.fixedExpenses);
+            if (sData.expectedIncomes?.length) setExpectedIncomes(sData.expectedIncomes);
+            if (sData.savingGoals?.length) setSavingGoals(sData.savingGoals);
+            if (sData.debts?.length) setDebts(sData.debts);
+            if (sData.investments?.length) setInvestments(sData.investments);
+            setLastSyncedAt(new Date(json.updatedAt));
+            if (json.fileInfo) setServerFileInfo(json.fileInfo);
+            setToastNotification(`סונכרן מקובץ האקסל שבשרת (${sData.transactions?.length || 0} תנועות) ✓`);
+            setTimeout(() => {
+              isSyncingServerExcelRef.current = false;
+            }, 500);
+          }
         }
-      } catch (e) {
-        // quiet ignore
+      } catch (err) {
+        // silent
       }
     };
-    fetchServerDatabase();
-  }, []);
+
+    const interval = setInterval(pollServerUpdates, 10000);
+
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') {
+        pollServerUpdates();
+      }
+    };
+    document.addEventListener('visibilitychange', handleFocus);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isServerDbLoaded]);
 
   // 1. Detect join / sync code from URL params (e.g. ?sync=MASTER or ?join=FAM-1234)
   useEffect(() => {
@@ -449,11 +566,13 @@ export default function App() {
 
   // 3. Auto-save local modifications to Server Excel Database and Firestore (Debounced)
   useEffect(() => {
-    syncToExcelServerAndFile(excelDatabaseSnapshot);
-
-    if (!currentHousehold?.id || isRemoteUpdateRef.current) return;
+    if (!isServerDbLoaded || isSyncingServerExcelRef.current) return;
 
     const timer = setTimeout(async () => {
+      syncToExcelServerAndFile(excelDatabaseSnapshot);
+
+      if (!currentHousehold?.id || isRemoteUpdateRef.current) return;
+
       try {
         setIsSyncing(true);
         await saveHouseholdLedger(
@@ -480,10 +599,11 @@ export default function App() {
       } finally {
         setIsSyncing(false);
       }
-    }, 1000);
+    }, 800);
 
     return () => clearTimeout(timer);
   }, [
+    isServerDbLoaded,
     currentHousehold?.id,
     excelDatabaseSnapshot,
   ]);
@@ -538,53 +658,85 @@ export default function App() {
   };
 
   const handleManualSync = async () => {
-    if (!currentHousehold?.id) return;
     setIsSyncing(true);
+    let serverExcelUpdated = false;
+
+    // 1. Primary: Pull directly from Server's Excel database file (finos_database.xlsx)
     try {
-      const cloudLedger = await getHouseholdLedger(currentHousehold.id);
-      if (cloudLedger && cloudLedger.transactions) {
-        if (cloudLedger.accounts && cloudLedger.accounts.length > 0) setAccounts(cloudLedger.accounts);
-        if (cloudLedger.creditCards && cloudLedger.creditCards.length > 0) setCreditCards(cloudLedger.creditCards);
-        if (cloudLedger.transactions) setTransactions(cloudLedger.transactions);
-        if (cloudLedger.fixedExpenses) setFixedExpenses(cloudLedger.fixedExpenses);
-        if (cloudLedger.expectedIncomes) setExpectedIncomes(cloudLedger.expectedIncomes);
-        if (cloudLedger.categories) setCategories(cloudLedger.categories);
-        if (cloudLedger.budgets && cloudLedger.budgets.length > 0) setBudgets(cloudLedger.budgets);
-        if (cloudLedger.savingGoals) setSavingGoals(cloudLedger.savingGoals);
-        if (cloudLedger.debts) setDebts(cloudLedger.debts);
-        if (cloudLedger.investments) setInvestments(cloudLedger.investments);
-        if (cloudLedger.merchantRules) setMerchantRules(cloudLedger.merchantRules);
-        if (cloudLedger.deletedTransactions) setDeletedTransactions(cloudLedger.deletedTransactions);
-        setToastNotification('הנתונים סונכרנו בהצלחה מהענן!');
-      } else {
-        // Upload current state to cloud
-        await saveHouseholdLedger(
-          currentHousehold.id,
-          {
-            accounts,
-            creditCards,
-            transactions,
-            fixedExpenses,
-            expectedIncomes,
-            categories,
-            budgets,
-            savingGoals,
-            debts,
-            investments,
-            merchantRules,
-            deletedTransactions,
-          },
-          'manual_push'
-        );
-        setToastNotification('הנתונים הועלו בהצלחה לענן!');
+      const res = await fetch('/api/database/state');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.exists && json.data) {
+          const sData = json.data;
+          isSyncingServerExcelRef.current = true;
+          lastServerUpdateIsoRef.current = json.updatedAt;
+          if (Array.isArray(sData.transactions)) setTransactions(sData.transactions);
+          if (sData.accounts && sData.accounts.length > 0) setAccounts(sData.accounts);
+          if (sData.creditCards && sData.creditCards.length > 0) setCreditCards(sData.creditCards);
+          if (sData.budgets && sData.budgets.length > 0) setBudgets(sData.budgets);
+          if (sData.fixedExpenses && sData.fixedExpenses.length > 0) setFixedExpenses(sData.fixedExpenses);
+          if (sData.expectedIncomes && sData.expectedIncomes.length > 0) setExpectedIncomes(sData.expectedIncomes);
+          if (sData.savingGoals && sData.savingGoals.length > 0) setSavingGoals(sData.savingGoals);
+          if (sData.debts && sData.debts.length > 0) setDebts(sData.debts);
+          if (sData.investments && sData.investments.length > 0) setInvestments(sData.investments);
+          setLastSyncedAt(new Date(json.updatedAt || Date.now()));
+          if (json.fileInfo) setServerFileInfo(json.fileInfo);
+          setToastNotification(`הנתונים נשלפו בהצלחה מקובץ האקסל שבשרת (${sData.transactions?.length || 0} תנועות) ✓`);
+          serverExcelUpdated = true;
+          setTimeout(() => {
+            isSyncingServerExcelRef.current = false;
+          }, 400);
+        }
       }
-      setLastSyncedAt(new Date());
-    } catch (err: any) {
-      console.error('Manual sync failed:', err);
-      setToastNotification('שגיאה בסנכרון מול הענן');
-    } finally {
-      setIsSyncing(false);
+    } catch (excelSyncErr) {
+      console.warn('Manual fetch from server Excel failed:', excelSyncErr);
     }
+
+    // 2. Secondary: If connected to Household Cloud, sync with Firestore too
+    if (currentHousehold?.id) {
+      try {
+        const cloudLedger = await getHouseholdLedger(currentHousehold.id);
+        if (cloudLedger && cloudLedger.transactions) {
+          if (cloudLedger.accounts && cloudLedger.accounts.length > 0) setAccounts(cloudLedger.accounts);
+          if (cloudLedger.creditCards && cloudLedger.creditCards.length > 0) setCreditCards(cloudLedger.creditCards);
+          if (cloudLedger.transactions) setTransactions(cloudLedger.transactions);
+          if (cloudLedger.fixedExpenses) setFixedExpenses(cloudLedger.fixedExpenses);
+          if (cloudLedger.expectedIncomes) setExpectedIncomes(cloudLedger.expectedIncomes);
+          if (cloudLedger.categories) setCategories(cloudLedger.categories);
+          if (cloudLedger.budgets && cloudLedger.budgets.length > 0) setBudgets(cloudLedger.budgets);
+          if (cloudLedger.savingGoals) setSavingGoals(cloudLedger.savingGoals);
+          if (cloudLedger.debts) setDebts(cloudLedger.debts);
+          if (cloudLedger.investments) setInvestments(cloudLedger.investments);
+          if (cloudLedger.merchantRules) setMerchantRules(cloudLedger.merchantRules);
+          if (cloudLedger.deletedTransactions) setDeletedTransactions(cloudLedger.deletedTransactions);
+          setToastNotification('הנתונים סונכרנו בהצלחה מהענן ומקובץ האקסל!');
+        } else {
+          // Upload current state to cloud
+          await saveHouseholdLedger(
+            currentHousehold.id,
+            {
+              accounts,
+              creditCards,
+              transactions,
+              fixedExpenses,
+              expectedIncomes,
+              categories,
+              budgets,
+              savingGoals,
+              debts,
+              investments,
+              merchantRules,
+              deletedTransactions,
+            },
+            'manual_push'
+          );
+        }
+      } catch (err: any) {
+        console.error('Manual sync cloud failed:', err);
+      }
+    }
+
+    setIsSyncing(false);
   };
 
   // Monthly summaries calculation for month comparison strip
@@ -777,35 +929,49 @@ export default function App() {
     setIsDemoMode(false);
     localStorage.setItem('finos_is_demo', 'false');
 
-    // Immediately push to shared cloud database so other open browsers / devices update in real-time!
-    try {
-      setIsSyncing(true);
-      await saveHouseholdLedger(
-        currentHousehold.id,
-        {
-          accounts: newData.accounts || accounts,
-          creditCards: newData.creditCards || creditCards,
-          transactions: newData.transactions || transactions,
-          fixedExpenses: newData.fixedExpenses || fixedExpenses,
-          expectedIncomes: newData.expectedIncomes || expectedIncomes,
-          categories,
-          budgets: newData.budgets || budgets,
-          savingGoals: newData.savingGoals || savingGoals,
-          debts: newData.debts || debts,
-          investments: newData.investments || investments,
-          merchantRules,
-          deletedTransactions,
-        },
-        'excel_upload'
-      );
-      setLastSyncedAt(new Date());
-      setToastNotification(`מסד הנתונים מאקסל נטען וסונכרן בהצלחה לכל המכשירים! (${newData.transactions?.length || 0} תנועות)`);
-    } catch (err) {
-      console.warn('Excel push to cloud note:', err);
-      setToastNotification(`מסד הנתונים מאקסל נטען בהצלחה (${newData.transactions?.length || 0} תנועות)`);
-    } finally {
-      setIsSyncing(false);
+    // Immediately save into server Excel file (data/finos_database.xlsx)
+    fetch('/api/database/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: newData }),
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.fileInfo) setServerFileInfo(json.fileInfo);
+        if (json.updatedAt) lastServerUpdateIsoRef.current = json.updatedAt;
+      })
+      .catch((e) => console.warn('Save restored excel to server error:', e));
+
+    // Immediately push to shared cloud database if connected
+    if (currentHousehold?.id) {
+      try {
+        setIsSyncing(true);
+        await saveHouseholdLedger(
+          currentHousehold.id,
+          {
+            accounts: newData.accounts || accounts,
+            creditCards: newData.creditCards || creditCards,
+            transactions: newData.transactions || transactions,
+            fixedExpenses: newData.fixedExpenses || fixedExpenses,
+            expectedIncomes: newData.expectedIncomes || expectedIncomes,
+            categories,
+            budgets: newData.budgets || budgets,
+            savingGoals: newData.savingGoals || savingGoals,
+            debts: newData.debts || debts,
+            investments: newData.investments || investments,
+            merchantRules,
+            deletedTransactions,
+          },
+          'excel_upload'
+        );
+        setLastSyncedAt(new Date());
+      } catch (err) {
+        console.warn('Excel push to cloud note:', err);
+      } finally {
+        setIsSyncing(false);
+      }
     }
+    setToastNotification(`מסד הנתונים מאקסל נטען ונשמר בהצלחה בשרת! (${newData.transactions?.length || 0} תנועות)`);
   };
 
   // Transactions deletion & restore logic
@@ -821,6 +987,19 @@ export default function App() {
     setDeletedTransactions((prev) => [newDeleted, ...prev]);
     setActiveUndoTx(tx);
     setToastNotification(null);
+
+    // Immediately remove from server Excel database file
+    fetch('/api/database/delete-transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.updatedAt) lastServerUpdateIsoRef.current = json.updatedAt;
+        if (json.fileInfo) setServerFileInfo(json.fileInfo);
+      })
+      .catch((e) => console.warn('Server delete transaction error:', e));
   };
 
   const handleRestoreTransaction = (txToRestore: Transaction) => {
@@ -831,6 +1010,19 @@ export default function App() {
     setDeletedTransactions((prev) => prev.filter((d) => d.transaction.id !== txToRestore.id));
     setActiveUndoTx(null);
     setToastNotification(`התנועה "${txToRestore.description}" שוחזרה בהצלחה`);
+
+    // Immediately restore into server Excel database file
+    fetch('/api/database/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction: txToRestore }),
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.updatedAt) lastServerUpdateIsoRef.current = json.updatedAt;
+        if (json.fileInfo) setServerFileInfo(json.fileInfo);
+      })
+      .catch((e) => console.warn('Server restore transaction error:', e));
   };
 
   const handleRestoreAllDeleted = () => {
@@ -889,6 +1081,20 @@ export default function App() {
       return next;
     });
     setToastNotification(`התנועה "${newTx.description}" תועדה ונשמרה למסד נתונים Excel ✓`);
+
+    // Immediately post transaction to server Excel file
+    fetch('/api/database/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction: newTx }),
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.updatedAt) lastServerUpdateIsoRef.current = json.updatedAt;
+        if (json.fileInfo) setServerFileInfo(json.fileInfo);
+        setExcelSaveStatus('saved');
+      })
+      .catch((e) => console.warn('Direct server post transaction error:', e));
   };
 
   const handleImportCsv = (newTxs: Transaction[], newCheckingBalance?: number) => {
@@ -1151,6 +1357,7 @@ export default function App() {
         onManualSync={handleManualSync}
         onConnectLocalFile={handleConnectLocalExcelFile}
         localFileName={localExcelFileName}
+        serverFileInfo={serverFileInfo}
       />
 
       {/* Quick Balance & Credit Card Update Modal */}

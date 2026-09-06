@@ -32,6 +32,7 @@ interface ExcelDatabaseModalProps {
   onManualSync?: () => Promise<void>;
   onConnectLocalFile?: () => Promise<void>;
   localFileName?: string | null;
+  serverFileInfo?: { name: string; path: string; size?: number; lastModified?: string } | null;
 }
 
 export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
@@ -44,6 +45,7 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
   onManualSync,
   onConnectLocalFile,
   localFileName = null,
+  serverFileInfo = null,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'export' | 'import' | 'guide'>('export');
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -288,8 +290,48 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
                 </div>
               </div>
 
+              {/* Server Excel File Information */}
+              <div className="p-4 rounded-2xl bg-gray-50 dark:bg-[#1E2526] border border-gray-200 dark:border-gray-700 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                    <span>קובץ אקסל ראשי בשרת (Server Database File)</span>
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
+                    מחובר ומסונכרן
+                  </span>
+                </div>
+                <div className="text-[11px] text-gray-600 dark:text-gray-300 space-y-1">
+                  <div>
+                    נתיב הקובץ בשרת: <code className="bg-gray-200 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono text-emerald-700 dark:text-emerald-400 font-bold">data/finos_database.xlsx</code>
+                  </div>
+                  <div className="text-gray-500 dark:text-gray-400">
+                    כל הוספה, מחיקה או עריכה מתועדת ישירות לתוך קובץ זה בשרת ומסונכרנת לכל מכשיר או דפדפן.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  {onManualSync && (
+                    <button
+                      onClick={() => onManualSync()}
+                      disabled={isSyncing}
+                      className="flex-1 py-2 px-3 rounded-xl bg-white dark:bg-[#252D2E] border border-gray-300 dark:border-gray-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 font-bold text-xs shadow-2xs transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <span>שלוף מחדש מקובץ השרת</span>
+                    </button>
+                  )}
+                  <a
+                    href="/api/database/download"
+                    className="flex-1 py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 text-emerald-900 dark:text-emerald-100 font-bold text-xs shadow-2xs transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>הורד את קובץ השרת ישירות</span>
+                  </a>
+                </div>
+              </div>
+
               {/* Action Buttons */}
-              <div className="space-y-2 pt-2">
+              <div className="space-y-2 pt-1">
                 <button
                   onClick={handleExport}
                   disabled={isProcessing}

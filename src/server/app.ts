@@ -1,11 +1,12 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import * as XLSX from "xlsx";
+import * as XLSXModule from "xlsx";
+const XLSX: any = (XLSXModule as any).default || XLSXModule;
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { parseTextStatement } from "../utils/bankStatementParser";
-import { buildExcelDatabaseWorkbook } from "../utils/excelDatabaseEngine";
+import { buildExcelDatabaseWorkbook, parseExcelWorkbook } from "../utils/excelDatabaseEngine";
 
 dotenv.config();
 
@@ -262,23 +263,129 @@ function ensureDataDir() {
   }
 }
 
-// Get saved master database state
-app.get("/api/database/state", (_req, res) => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(DB_JSON_FILE)) {
+/**
+ * Safely reads an Excel workbook from file path using buffer or readFile
+ */
+function readWorkbookFromFile(filePath: string): any {
+  if (typeof XLSX.readFile === "function") {
+    try {
+      return XLSX.readFile(filePath);
+    } catch (e) {
+      // fallback to buffer read
+    }
+  }
+  const buffer = fs.readFileSync(filePath);
+  return XLSX.read(buffer, { type: "buffer" });
+}
+
+/**
+ * Safely writes an Excel workbook to disk using buffer or writeFile
+ */
+function writeWorkbookToFile(wb: any, filePath: string): void {
+  if (typeof XLSX.writeFile === "function") {
+    try {
+      XLSX.writeFile(wb, filePath);
+      return;
+    } catch (e) {
+      // fallback to buffer write
+    }
+  }
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  fs.writeFileSync(filePath, buffer);
+}
+
+/**
+ * Reads and parses database directly from the server's Excel file (finos_database.xlsx)
+ */
+function readExcelDatabaseFromDisk(): { data: any; stats: any; fileInfo: any; updatedAt: string } | null {
+  ensureDataDir();
+
+  // 1. First priority: Read directly from server Excel file
+  if (fs.existsSync(DB_EXCEL_FILE)) {
+    try {
+      const stats = fs.statSync(DB_EXCEL_FILE);
+      if (stats.size > 0) {
+        const workbook = readWorkbookFromFile(DB_EXCEL_FILE);
+        const parseResult = parseExcelWorkbook(workbook, "finos_database.xlsx");
+        return {
+          data: parseResult.data,
+          stats: parseResult.stats,
+          fileInfo: {
+            name: "finos_database.xlsx",
+            path: "data/finos_database.xlsx",
+            absolutePath: path.resolve(DB_EXCEL_FILE),
+            size: stats.size,
+            lastModified: stats.mtime.toISOString(),
+            sheetNames: workbook.SheetNames,
+          },
+          updatedAt: stats.mtime.toISOString(),
+        };
+      }
+    } catch (readErr) {
+      console.error("Error parsing Excel file from disk:", readErr);
+    }
+  }
+
+  // 2. Fallback: If Excel does not exist yet or was zero bytes, load from JSON and write Excel
+  if (fs.existsSync(DB_JSON_FILE)) {
+    try {
       const raw = fs.readFileSync(DB_JSON_FILE, "utf-8");
       const parsed = JSON.parse(raw);
-      return res.json({ exists: true, data: parsed.data || parsed, updatedAt: parsed.updatedAt || null });
+      const data = parsed.data || parsed;
+      try {
+        const wb = buildExcelDatabaseWorkbook(data);
+        writeWorkbookToFile(wb, DB_EXCEL_FILE);
+        const stats = fs.statSync(DB_EXCEL_FILE);
+        return {
+          data,
+          stats: {
+            transactionsCount: data.transactions?.length || 0,
+            accountsCount: data.accounts?.length || 0,
+            creditCardsCount: data.creditCards?.length || 0,
+          },
+          fileInfo: {
+            name: "finos_database.xlsx",
+            path: "data/finos_database.xlsx",
+            absolutePath: path.resolve(DB_EXCEL_FILE),
+            size: stats.size,
+            lastModified: stats.mtime.toISOString(),
+            sheetNames: wb.SheetNames,
+          },
+          updatedAt: stats.mtime.toISOString(),
+        };
+      } catch (wbErr) {
+        console.warn("Could not generate Excel workbook:", wbErr);
+      }
+    } catch (jsonErr) {
+      console.error("Error reading JSON file from disk:", jsonErr);
+    }
+  }
+
+  return null;
+}
+
+// Get saved master database state extracted directly from server Excel file
+app.get("/api/database/state", (_req, res) => {
+  try {
+    const db = readExcelDatabaseFromDisk();
+    if (db) {
+      return res.json({
+        exists: true,
+        data: db.data,
+        stats: db.stats,
+        fileInfo: db.fileInfo,
+        updatedAt: db.updatedAt,
+        source: "server_excel_file",
+      });
     }
     return res.json({ exists: false });
   } catch (err: any) {
     console.error("Error reading database state:", err);
-    return res.status(500).json({ error: "שגיאה בקריאת מסד הנתונים" });
+    return res.status(500).json({ error: "שגיאה בקריאת מסד הנתונים מקובץ האקסל בשרת" });
   }
 });
 
-// Save master database state and write Excel file
+// Save complete database state directly into server's Excel file
 app.post("/api/database/state", (req, res) => {
   try {
     const { data } = req.body;
@@ -287,25 +394,31 @@ app.post("/api/database/state", (req, res) => {
     }
 
     ensureDataDir();
+    const nowIso = new Date().toISOString();
     const payload = {
       data,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso,
     };
 
-    // 1. Write JSON backup
+    // 1. Write Excel file directly
+    const workbook = buildExcelDatabaseWorkbook(data);
+    writeWorkbookToFile(workbook, DB_EXCEL_FILE);
+
+    // 2. Write JSON backup
     fs.writeFileSync(DB_JSON_FILE, JSON.stringify(payload, null, 2), "utf-8");
 
-    // 2. Generate and write Excel workbook
-    try {
-      const workbook = buildExcelDatabaseWorkbook(data);
-      XLSX.writeFile(workbook, DB_EXCEL_FILE);
-    } catch (excelErr) {
-      console.warn("Could not write Excel file to disk:", excelErr);
-    }
+    const stats = fs.statSync(DB_EXCEL_FILE);
 
     return res.json({
       success: true,
-      updatedAt: payload.updatedAt,
+      updatedAt: stats.mtime.toISOString(),
+      fileInfo: {
+        name: "finos_database.xlsx",
+        path: "data/finos_database.xlsx",
+        absolutePath: path.resolve(DB_EXCEL_FILE),
+        size: stats.size,
+        sheetNames: workbook.SheetNames,
+      },
       stats: {
         transactions: data.transactions?.length || 0,
         accounts: data.accounts?.length || 0,
@@ -313,8 +426,113 @@ app.post("/api/database/state", (req, res) => {
       },
     });
   } catch (err: any) {
-    console.error("Error saving database state:", err);
-    return res.status(500).json({ error: "שגיאה בשמירת מסד הנתונים", details: err.message });
+    console.error("Error saving database state to Excel:", err);
+    return res.status(500).json({ error: "שגיאה בשמירת מסד הנתונים לקובץ אקסל", details: err.message });
+  }
+});
+
+// Append or update a single transaction immediately into server Excel file
+app.post("/api/database/transaction", (req, res) => {
+  try {
+    const { transaction } = req.body;
+    if (!transaction || !transaction.id) {
+      return res.status(400).json({ error: "נתוני תנועה חסרים" });
+    }
+
+    ensureDataDir();
+    const current = readExcelDatabaseFromDisk();
+    const currentData = current?.data || {
+      accounts: [],
+      creditCards: [],
+      transactions: [],
+      fixedExpenses: [],
+      expectedIncomes: [],
+      budgets: [],
+      savingGoals: [],
+      debts: [],
+      investments: [],
+    };
+
+    if (!Array.isArray(currentData.transactions)) {
+      currentData.transactions = [];
+    }
+
+    const existingIdx = currentData.transactions.findIndex((t: any) => t.id === transaction.id);
+    if (existingIdx >= 0) {
+      currentData.transactions[existingIdx] = transaction;
+    } else {
+      currentData.transactions.unshift(transaction);
+    }
+
+    // Write updated workbook to disk immediately
+    const workbook = buildExcelDatabaseWorkbook(currentData);
+    writeWorkbookToFile(workbook, DB_EXCEL_FILE);
+
+    // Save JSON backup
+    fs.writeFileSync(
+      DB_JSON_FILE,
+      JSON.stringify({ data: currentData, updatedAt: new Date().toISOString() }, null, 2),
+      "utf-8"
+    );
+
+    const stats = fs.statSync(DB_EXCEL_FILE);
+
+    return res.json({
+      success: true,
+      transaction,
+      totalTransactions: currentData.transactions.length,
+      updatedAt: stats.mtime.toISOString(),
+      fileInfo: {
+        name: "finos_database.xlsx",
+        path: "data/finos_database.xlsx",
+        size: stats.size,
+      },
+    });
+  } catch (err: any) {
+    console.error("Error saving single transaction to Excel:", err);
+    return res.status(500).json({ error: "שגיאה ברישום התנועה בקובץ האקסל בשרת", details: err.message });
+  }
+});
+
+// Delete a transaction from server Excel file
+app.post("/api/database/delete-transaction", (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "מזהה תנועה חסר" });
+    }
+
+    ensureDataDir();
+    const current = readExcelDatabaseFromDisk();
+    if (!current?.data || !Array.isArray(current.data.transactions)) {
+      return res.status(404).json({ error: "לא נמצאו תנועות במסד הנתונים" });
+    }
+
+    const currentData = current.data;
+    const initialLen = currentData.transactions.length;
+    currentData.transactions = currentData.transactions.filter((t: any) => t.id !== id);
+
+    if (currentData.transactions.length !== initialLen) {
+      const workbook = buildExcelDatabaseWorkbook(currentData);
+      writeWorkbookToFile(workbook, DB_EXCEL_FILE);
+      fs.writeFileSync(
+        DB_JSON_FILE,
+        JSON.stringify({ data: currentData, updatedAt: new Date().toISOString() }, null, 2),
+        "utf-8"
+      );
+    }
+
+    const stats = fs.existsSync(DB_EXCEL_FILE) ? fs.statSync(DB_EXCEL_FILE) : null;
+
+    return res.json({
+      success: true,
+      deletedId: id,
+      totalTransactions: currentData.transactions.length,
+      updatedAt: stats ? stats.mtime.toISOString() : new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("Error deleting transaction from Excel:", err);
+    return res.status(500).json({ error: "שגיאה במחיקת התנועה מקובץ האקסל בשרת", details: err.message });
   }
 });
 
@@ -324,7 +542,7 @@ app.get("/api/database/download", (_req, res) => {
     ensureDataDir();
     if (fs.existsSync(DB_EXCEL_FILE)) {
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="FinOS_Database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      res.setHeader("Content-Disposition", `attachment; filename="finos_database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
       return res.sendFile(DB_EXCEL_FILE);
     }
 
@@ -333,13 +551,13 @@ app.get("/api/database/download", (_req, res) => {
       const raw = fs.readFileSync(DB_JSON_FILE, "utf-8");
       const parsed = JSON.parse(raw);
       const workbook = buildExcelDatabaseWorkbook(parsed.data || parsed);
-      XLSX.writeFile(workbook, DB_EXCEL_FILE);
+      writeWorkbookToFile(workbook, DB_EXCEL_FILE);
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="FinOS_Database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      res.setHeader("Content-Disposition", `attachment; filename="finos_database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
       return res.sendFile(DB_EXCEL_FILE);
     }
 
-    return res.status(404).json({ error: "טרם נשמר קובץ אקסל" });
+    return res.status(404).json({ error: "טרם נשמר קובץ אקסל בשרת" });
   } catch (err: any) {
     console.error("Error downloading database:", err);
     return res.status(500).json({ error: "שגיאה בהורדת קובץ אקסל" });
