@@ -18,9 +18,13 @@ import {
   ChevronDown,
   Menu,
   X,
+  Cloud,
+  Users,
 } from 'lucide-react';
 import { MonthHealthStatus, MonthSummary } from '../types';
 import { MonthSelector } from './MonthSelector';
+import { Household } from '../firebase/householdService';
+import { User } from 'firebase/auth';
 
 export type TabType =
   | 'dashboard'
@@ -48,6 +52,10 @@ interface NavbarProps {
   setIsDark: (dark: boolean) => void;
   isDemoMode?: boolean;
   onOpenDataModal?: () => void;
+  onOpenSyncModal?: () => void;
+  currentHousehold?: Household | null;
+  currentUser?: User | null;
+  isSyncing?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -64,6 +72,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   setIsDark,
   isDemoMode = false,
   onOpenDataModal,
+  onOpenSyncModal,
+  currentHousehold = null,
+  currentUser = null,
+  isSyncing = false,
 }) => {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
@@ -232,6 +244,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               )}
 
+              {onOpenSyncModal && (
+                <button
+                  onClick={onOpenSyncModal}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs ${
+                    currentHousehold
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800/80 hover:bg-emerald-100'
+                      : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/60 hover:bg-blue-100'
+                  }`}
+                  title={currentHousehold ? `מסונכרן לענן: ${currentHousehold.name}` : 'הגדר סנכרון ענן / שיתוף זוגי'}
+                  aria-label="סנכרון ענן"
+                >
+                  <Cloud className={`w-4 h-4 ${currentHousehold ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600'}`} />
+                  {currentHousehold ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="hidden xl:inline">{currentHousehold.name}</span>
+                      <span className="xl:hidden">מסונכרן</span>
+                    </span>
+                  ) : (
+                    <span className="hidden lg:inline">סנכרון זוגי</span>
+                  )}
+                </button>
+              )}
+
               <button
                 onClick={() => setIsDark(!isDark)}
                 className="p-2 rounded-xl text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-[#252D2E] transition-colors"
@@ -242,8 +278,26 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             </div>
 
-            {/* Mobile Header Right Actions (Clean & simple: Excel + Dark Mode) */}
+            {/* Mobile Header Right Actions (Clean & simple: Sync + Excel + Dark Mode) */}
             <div className="flex sm:hidden items-center gap-1 shrink-0">
+              {onOpenSyncModal && (
+                <button
+                  onClick={onOpenSyncModal}
+                  className={`p-2 rounded-xl transition-colors relative ${
+                    currentHousehold
+                      ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50'
+                      : 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50'
+                  }`}
+                  title={currentHousehold ? `מסונכרן: ${currentHousehold.name}` : 'סנכרון ענן וזוגי'}
+                  aria-label="סנכרון ענן"
+                >
+                  <Cloud className="w-4 h-4" />
+                  {currentHousehold && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-1 ring-white dark:ring-[#1E2425]" />
+                  )}
+                </button>
+              )}
+
               <button
                 onClick={onOpenCsvModal}
                 className="p-2 rounded-xl text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
@@ -595,6 +649,30 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Direct Actions in Drawer */}
             <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#2D3636]">
+              {onOpenSyncModal && (
+                <button
+                  onClick={() => {
+                    setIsMobileDrawerOpen(false);
+                    onOpenSyncModal();
+                  }}
+                  className={`w-full flex items-center justify-between p-3 rounded-2xl border text-xs font-bold transition-colors ${
+                    currentHousehold
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                      : 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Cloud className="w-4 h-4 text-emerald-600" />
+                    <span>
+                      {currentHousehold
+                        ? `סנכרון ענן פעיל: ${currentHousehold.name}`
+                        : 'סנכרון ענן ומרחב זוגי משותף'}
+                    </span>
+                  </div>
+                  <span>&larr;</span>
+                </button>
+              )}
+
               <button
                 onClick={() => {
                   setIsMobileDrawerOpen(false);

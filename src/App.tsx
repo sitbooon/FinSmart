@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   demoAccounts,
   demoCreditCards,
@@ -60,6 +60,22 @@ import { QuickBalanceModal } from './components/QuickBalanceModal';
 import { AvailableMoneyExplainerModal } from './components/AvailableMoneyExplainerModal';
 import { DeletedTransactionsModal } from './components/DeletedTransactionsModal';
 import { UndoToast } from './components/UndoToast';
+import { HouseholdSyncModal } from './components/HouseholdSyncModal';
+import { auth } from './firebase/config';
+import { User, onAuthStateChanged } from 'firebase/auth';
+import {
+  Household,
+  SharedLedgerPayload,
+  getUserProfile,
+  getHousehold,
+  findHouseholdForEmail,
+  createHousehold,
+  joinHouseholdByCode,
+  inviteSpouseByEmail,
+  subscribeToHouseholdLedger,
+  saveHouseholdLedger,
+  setUserActiveHousehold,
+} from './firebase/householdService';
 
 export default function App() {
   // Theme state
@@ -104,6 +120,15 @@ export default function App() {
   const [isQuickBalanceOpen, setIsQuickBalanceOpen] = useState(false);
   const [isAvailableExplainerOpen, setIsAvailableExplainerOpen] = useState(false);
   const [isDeletedModalOpen, setIsDeletedModalOpen] = useState(false);
+
+  // Household Cloud Sync state (cross-device sync & couple sharing)
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentHousehold, setCurrentHousehold] = useState<Household | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [prefilledInviteCode, setPrefilledInviteCode] = useState('');
+  const isRemoteUpdateRef = useRef(false);
 
   // Deleted transactions history & Undo Toast state (Safe delete / Undo)
   const [deletedTransactions, setDeletedTransactions] = useState<DeletedTransaction[]>(() => {
@@ -241,6 +266,217 @@ export default function App() {
     merchantRules,
     deletedTransactions,
   ]);
+
+  // 1. Detect join code from URL params (e.g. spouse opened link ?join=FAM-1234)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const joinCode = params.get('join');
+    if (joinCode) {
+      setPrefilledInviteCode(joinCode.toUpperCase());
+      setIsSyncModalOpen(true);
+    }
+  }, []);
+
+  // 2. Firebase Auth Listener - track logged-in user and active household
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (!user) {
+        setCurrentHousehold(null);
+        return;
+      }
+
+      try {
+        // Look up active household for user
+        const profile = await getUserProfile(user.uid);
+        let householdId = profile?.activeHouseholdId;
+
+        // If user doesn't have an active household, check if spouse pre-invited their email
+        if (!householdId && user.email) {
+          const invitedHousehold = await findHouseholdForEmail(user.email);
+          if (invitedHousehold) {
+            householdId = invitedHousehold.id;
+            await setUserActiveHousehold(user.uid, householdId);
+          }
+        }
+
+        if (householdId) {
+          const hh = await getHousehold(householdId);
+          if (hh) {
+            setCurrentHousehold(hh);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching user household:', err);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 3. Real-time Subscription to Shared Household Ledger in Firestore
+  useEffect(() => {
+    if (!currentHousehold) return;
+
+    setIsSyncing(true);
+    const unsubscribe = subscribeToHouseholdLedger(currentHousehold.id, (cloudLedger) => {
+      isRemoteUpdateRef.current = true;
+      if (cloudLedger.accounts) setAccounts(cloudLedger.accounts);
+      if (cloudLedger.creditCards) setCreditCards(cloudLedger.creditCards);
+      if (cloudLedger.transactions) setTransactions(cloudLedger.transactions);
+      if (cloudLedger.fixedExpenses) setFixedExpenses(cloudLedger.fixedExpenses);
+      if (cloudLedger.expectedIncomes) setExpectedIncomes(cloudLedger.expectedIncomes);
+      if (cloudLedger.categories) setCategories(cloudLedger.categories);
+      if (cloudLedger.budgets) setBudgets(cloudLedger.budgets);
+      if (cloudLedger.savingGoals) setSavingGoals(cloudLedger.savingGoals);
+      if (cloudLedger.debts) setDebts(cloudLedger.debts);
+      if (cloudLedger.investments) setInvestments(cloudLedger.investments);
+      if (cloudLedger.merchantRules) setMerchantRules(cloudLedger.merchantRules);
+      if (cloudLedger.deletedTransactions) setDeletedTransactions(cloudLedger.deletedTransactions);
+
+      setLastSyncedAt(new Date());
+      setIsSyncing(false);
+
+      // Release the remote update lock
+      setTimeout(() => {
+        isRemoteUpdateRef.current = false;
+      }, 600);
+    });
+
+    return () => unsubscribe();
+  }, [currentHousehold?.id]);
+
+  // 4. Auto-save local modifications to Firestore (Debounced, skipping remote snapshots)
+  useEffect(() => {
+    if (!currentHousehold || !currentUser || isRemoteUpdateRef.current) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsSyncing(true);
+        await saveHouseholdLedger(
+          currentHousehold.id,
+          {
+            accounts,
+            creditCards,
+            transactions,
+            fixedExpenses,
+            expectedIncomes,
+            categories,
+            budgets,
+            savingGoals,
+            debts,
+            investments,
+            merchantRules,
+            deletedTransactions,
+          },
+          currentUser.uid,
+          currentUser.email || undefined
+        );
+        setLastSyncedAt(new Date());
+      } catch (err) {
+        console.error('Error auto-syncing ledger to cloud:', err);
+      } finally {
+        setIsSyncing(false);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [
+    currentHousehold?.id,
+    currentUser?.uid,
+    accounts,
+    creditCards,
+    transactions,
+    fixedExpenses,
+    expectedIncomes,
+    categories,
+    budgets,
+    savingGoals,
+    debts,
+    investments,
+    merchantRules,
+    deletedTransactions,
+  ]);
+
+  // Household Management Actions
+  const handleCreateHousehold = async (name: string) => {
+    if (!currentUser) throw new Error('יש להתחבר תחילה כדי ליצור מרחב משותף');
+    const newHh = await createHousehold(name, currentUser.uid, currentUser.email || undefined);
+
+    // Immediately push current local data to seed the new cloud household
+    await saveHouseholdLedger(
+      newHh.id,
+      {
+        accounts,
+        creditCards,
+        transactions,
+        fixedExpenses,
+        expectedIncomes,
+        categories,
+        budgets,
+        savingGoals,
+        debts,
+        investments,
+        merchantRules,
+        deletedTransactions,
+      },
+      currentUser.uid,
+      currentUser.email || undefined
+    );
+
+    setCurrentHousehold(newHh);
+    setLastSyncedAt(new Date());
+    setToastNotification(`המרחב "${name}" נוצר וסונכרן לענן בהצלחה!`);
+  };
+
+  const handleJoinHousehold = async (code: string) => {
+    if (!currentUser) throw new Error('יש להתחבר תחילה כדי להצטרף למרחב משותף');
+    const hh = await joinHouseholdByCode(code, currentUser.uid, currentUser.email || undefined);
+    setCurrentHousehold(hh);
+    setToastNotification(`הצטרפת בהצלחה למרחב "${hh.name}"! הנתונים נטענו.`);
+  };
+
+  const handleInviteSpouse = async (email: string) => {
+    if (!currentHousehold) return;
+    await inviteSpouseByEmail(currentHousehold.id, email);
+    // Reload household to refresh members list
+    const updated = await getHousehold(currentHousehold.id);
+    if (updated) {
+      setCurrentHousehold(updated);
+    }
+  };
+
+  const handleManualSync = async () => {
+    if (!currentHousehold || !currentUser) return;
+    setIsSyncing(true);
+    try {
+      await saveHouseholdLedger(
+        currentHousehold.id,
+        {
+          accounts,
+          creditCards,
+          transactions,
+          fixedExpenses,
+          expectedIncomes,
+          categories,
+          budgets,
+          savingGoals,
+          debts,
+          investments,
+          merchantRules,
+          deletedTransactions,
+        },
+        currentUser.uid,
+        currentUser.email || undefined
+      );
+      setLastSyncedAt(new Date());
+      setToastNotification('הנתונים סונכרנו לענן בהצלחה');
+    } catch (err: any) {
+      console.error('Manual sync failed:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Monthly summaries calculation for month comparison strip
   const monthlySummaries = useMemo(() => {
@@ -559,6 +795,10 @@ export default function App() {
         setIsDark={setIsDark}
         isDemoMode={isDemoMode}
         onOpenDataModal={() => setIsDataModalOpen(true)}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
+        currentHousehold={currentHousehold}
+        currentUser={currentUser}
+        isSyncing={isSyncing}
       />
 
       {/* Main Page Container */}
@@ -764,6 +1004,21 @@ export default function App() {
         }}
         onOpenTrashBin={() => setIsDeletedModalOpen(true)}
         deletedCount={deletedTransactions.length}
+      />
+
+      {/* Household Cloud Sync & Couple Sharing Modal */}
+      <HouseholdSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        currentUser={currentUser}
+        currentHousehold={currentHousehold}
+        isSyncing={isSyncing}
+        lastSyncedAt={lastSyncedAt}
+        onManualSync={handleManualSync}
+        onCreateHousehold={handleCreateHousehold}
+        onJoinHousehold={handleJoinHousehold}
+        onInviteSpouse={handleInviteSpouse}
+        prefilledInviteCode={prefilledInviteCode}
       />
     </div>
   );

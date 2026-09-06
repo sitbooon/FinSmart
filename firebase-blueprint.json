@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "Household": {
+      "title": "Household",
+      "description": "A shared family workspace ledger connecting spouses or household members",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "memberEmails": { "type": "array" },
+        "inviteCode": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "createdAt", "createdBy", "memberUids", "inviteCode"]
+    },
+    "Ledger": {
+      "title": "Ledger",
+      "description": "Financial ledger containing shared transactions, accounts, and budgets",
+      "type": "object",
+      "properties": {
+        "householdId": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastUpdatedBy": { "type": "string" },
+        "transactions": { "type": "array" },
+        "accounts": { "type": "array" },
+        "creditCards": { "type": "array" },
+        "budgets": { "type": "array" },
+        "fixedExpenses": { "type": "array" },
+        "expectedIncomes": { "type": "array" },
+        "savingGoals": { "type": "array" },
+        "debts": { "type": "array" },
+        "investments": { "type": "array" },
+        "categories": { "type": "array" },
+        "merchantRules": { "type": "object" },
+        "deletedTransactions": { "type": "array" }
+      },
+      "required": ["householdId", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile holding active household reference and display name",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "activeHouseholdId": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/households/{householdId}": {
+      "schema": "Household",
+      "description": "Collection of shared household workspaces"
+    },
+    "/households/{householdId}/data/ledger": {
+      "schema": "Ledger",
+      "description": "Real-time synchronized financial ledger for the household"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile and active household mapping"
+    }
+  }
+}

@@ -35,8 +35,17 @@
    - **Output Directory**: `dist` (מוגדר אוטומטית).
 
 4. **משתני סביבה (Environment Variables):**
-   - תחת **Environment Variables**, תוכל להוסיף את מפתח ה-AI:
+   - תחת **Environment Variables** ב-Vercel, הוסף את משתני הסביבה הבאים:
      - `GEMINI_API_KEY`: המפתח שלך מ-Google AI Studio (אם אין לך כרגע, האפליקציה תפעל במצב Smart Deterministic Engine ללא שגיאות).
+     
+     **משתני סנכרון ענן (Firebase Cloud Sync עבור סנכרון בין טלפונים ומחשבים לשני בני הזוג):**
+     - `VITE_FIREBASE_API_KEY`: `AIzaSyCcoFL2evuiuJw2itX0v-o34koxMQbjr_0`
+     - `VITE_FIREBASE_AUTH_DOMAIN`: `zippy-palace-g6rpq.firebaseapp.com`
+     - `VITE_FIREBASE_PROJECT_ID`: `zippy-palace-g6rpq`
+     - `VITE_FIREBASE_STORAGE_BUCKET`: `zippy-palace-g6rpq.firebasestorage.app`
+     - `VITE_FIREBASE_MESSAGING_SENDER_ID`: `210870018294`
+     - `VITE_FIREBASE_APP_ID`: `1:210870018294:web:7462337bef098ecd864cd7`
+     - `VITE_FIREBASE_DATABASE_ID`: `ai-studio-5b167304-2025-400f-8dde-e2e438bb0a2b`
    
 5. **פריסה:**
    - לחץ על **"Deploy"**!
