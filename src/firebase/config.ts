@@ -5,18 +5,29 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import localConfig from '../../firebase-applet-config.json';
 
 // Firebase configuration: prefers client environment variables (useful for Vercel deployments),
-// with full fallback to local generated config.
+// with full fallback to local generated config and hardcoded project settings.
 const metaEnv = (import.meta as any).env || {};
 
-export const firebaseConfig = {
-  apiKey: metaEnv.VITE_FIREBASE_API_KEY || localConfig.apiKey,
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || localConfig.authDomain,
-  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || localConfig.projectId,
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || localConfig.storageBucket,
-  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || localConfig.messagingSenderId,
-  appId: metaEnv.VITE_FIREBASE_APP_ID || localConfig.appId,
-  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID || localConfig.firestoreDatabaseId,
+const FALLBACK_CONFIG = {
+  projectId: "zippy-palace-g6rpq",
+  appId: "1:210870018294:web:7462337bef098ecd864cd7",
+  apiKey: "AIzaSyCcoFL2evuiuJw2itX0v-o34koxMQbjr_0",
+  authDomain: "zippy-palace-g6rpq.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-5b167304-2025-400f-8dde-e2e438bb0a2b",
+  storageBucket: "zippy-palace-g6rpq.firebasestorage.app",
+  messagingSenderId: "210870018294",
 };
+
+export const firebaseConfig = {
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || localConfig?.apiKey || FALLBACK_CONFIG.apiKey,
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || localConfig?.authDomain || FALLBACK_CONFIG.authDomain,
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || localConfig?.projectId || FALLBACK_CONFIG.projectId,
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || localConfig?.storageBucket || FALLBACK_CONFIG.storageBucket,
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || localConfig?.messagingSenderId || FALLBACK_CONFIG.messagingSenderId,
+  appId: metaEnv.VITE_FIREBASE_APP_ID || localConfig?.appId || FALLBACK_CONFIG.appId,
+  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID || localConfig?.firestoreDatabaseId || FALLBACK_CONFIG.firestoreDatabaseId,
+};
+
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 

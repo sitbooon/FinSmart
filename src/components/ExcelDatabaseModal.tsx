@@ -27,6 +27,9 @@ interface ExcelDatabaseModalProps {
   onClose: () => void;
   appData: ExcelDatabaseData;
   onRestoreData: (newData: ExcelDatabaseData) => void;
+  isSyncing?: boolean;
+  lastSyncedAt?: Date | null;
+  onManualSync?: () => Promise<void>;
 }
 
 export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
@@ -34,6 +37,9 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
   onClose,
   appData,
   onRestoreData,
+  isSyncing = false,
+  lastSyncedAt = null,
+  onManualSync,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'export' | 'import' | 'guide'>('export');
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -151,16 +157,20 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="font-bold text-base text-[#2D3436] dark:text-white">
                   מסד נתונים מבוסס אקסל (Excel Database)
                 </h2>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                   .xlsx Database
                 </span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                  <span className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
+                  {isSyncing ? 'מסנכרן כעת...' : 'מסונכרן בזמן אמת לכל הדפדפנים'}
+                </span>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                כל הנתונים, התנועות והחשבונות שלך בקובץ אקסל אחד מלא – ללא תלות בענן או הרשאות
+                כל הנתונים, התנועות והחשבונות שלך מנוהלים כקובץ אקסל שלם ומסונכרנים אוטומטית בין המכשירים
               </p>
             </div>
           </div>
