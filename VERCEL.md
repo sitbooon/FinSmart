@@ -47,7 +47,16 @@
      - `VITE_FIREBASE_APP_ID`: `1:210870018294:web:7462337bef098ecd864cd7`
      - `VITE_FIREBASE_DATABASE_ID`: `ai-studio-5b167304-2025-400f-8dde-e2e438bb0a2b`
    
-5. **פריסה:**
+5. **שלב חובה למניעת שגיאת auth/unauthorized-domain בהתחברות:**
+   - ב-Firebase יש הגנת אבטחה שמאפשרת התחברות רק מדומיינים שאושרו מראש.
+   - היכנס לקישור הבא לפרויקט שלך:
+     [הגדרות Firebase Console - דומיינים מורשים](https://console.firebase.google.com/project/zippy-palace-g6rpq/authentication/settings)
+   - גלול אל **"Authorized domains" (דומיינים מורשים)**.
+   - לחץ על **"Add domain" (הוסף דומיין)**.
+   - הוסף את `vercel.app` (מאשר את כל הכתובות תחת vercel) או את הדומיין המדויק של האתר שלך (למשל `my-finance.vercel.app`).
+   - לחץ **Save**. השינוי חל מיידית ללא צורך בפריסה חוזרת!
+
+6. **פריסה:**
    - לחץ על **"Deploy"**!
    - תוך כ-45 שניות תקבל כתובת חיה ומאובטחת (למשל: `https://finos-app.vercel.app`) עם תעודת SSL חינם.
 

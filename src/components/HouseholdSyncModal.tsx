@@ -97,7 +97,9 @@ export const HouseholdSyncModal: React.FC<HouseholdSyncModalProps> = ({
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error('Google sign in error:', err);
-      if (err.code !== 'auth/popup-closed-by-user') {
+      if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+        setAuthError('unauthorized-domain');
+      } else if (err.code !== 'auth/popup-closed-by-user') {
         setAuthError(err.message || 'שגיאה בהתחברות באמצעות גוגל');
       }
     } finally {
@@ -119,7 +121,9 @@ export const HouseholdSyncModal: React.FC<HouseholdSyncModalProps> = ({
       }
     } catch (err: any) {
       console.error('Email auth error:', err);
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+        setAuthError('unauthorized-domain');
+      } else if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setAuthError('אימייל או סיסמה שגויים');
       } else if (err.code === 'auth/email-already-in-use') {
         setAuthError('כתובת אימייל זו כבר רשומה במערכת. אנא התחבר.');
@@ -280,11 +284,61 @@ VITE_FIREBASE_DATABASE_ID="${firebaseConfig.firestoreDatabaseId || ''}"`;
         {/* Modal Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-5 text-sm">
           {/* Notifications */}
-          {authError && (
+          {authError === 'unauthorized-domain' ? (
+            <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs space-y-3">
+              <div className="flex items-start gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 shrink-0">
+                  <ExternalLink className="w-4 h-4" />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <h4 className="font-bold text-sm text-amber-950 dark:text-amber-100">
+                    דומיין האתר טרם אושר ב-Firebase Authentication
+                  </h4>
+                  <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+                    מנגנון האבטחה של Firebase דורש להגדיר פעם אחת בלבד את הדומיין שממנו מתחברים.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[11px] text-amber-700 dark:text-amber-400">הדומיין הנוכחי שלך:</span>
+                    <span className="font-mono bg-white/80 dark:bg-black/40 px-2.5 py-0.5 rounded-md border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200 font-bold select-all">
+                      {typeof window !== 'undefined' ? window.location.hostname : 'your-app.vercel.app'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-amber-200 dark:border-amber-800/60 space-y-2">
+                <div className="font-semibold text-xs">איך מאשרים את הדומיין ב-2 קליקים?</div>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-amber-850 dark:text-amber-300 pr-1">
+                  <li>לחץ על הכפתור למטה כדי לפתוח ישירות את הגדרות הפרויקט ב-Firebase Console.</li>
+                  <li>גלול למטה לחלק <strong>"Authorized domains" (דומיינים מורשים)</strong>.</li>
+                  <li>לחץ על <strong>"Add domain" (הוסף דומיין)</strong>.</li>
+                  <li>הזן <code className="bg-amber-200/80 dark:bg-amber-900/60 px-1 py-0.5 rounded font-mono font-bold">vercel.app</code> (מאשר את כל הכתובות ב-Vercel) או את הכתובת המדויקת של האתר שלך, ולחץ <strong>Save</strong>.</li>
+                </ol>
+
+                <div className="pt-2 flex flex-wrap items-center gap-2">
+                  <a
+                    href="https://console.firebase.google.com/project/zippy-palace-g6rpq/authentication/settings"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors"
+                  >
+                    <span>פתח את הגדרות הדומיינים ב-Firebase Console</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    onClick={() => setAuthError(null)}
+                    className="px-3 py-2 rounded-xl bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs font-semibold hover:bg-gray-50 transition-colors"
+                  >
+                    סגור
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : authError ? (
             <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs font-medium">
               {authError}
             </div>
-          )}
+          ) : null}
           {actionSuccess && (
             <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-2">
               <Check className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -726,7 +780,31 @@ VITE_FIREBASE_DATABASE_ID="${firebaseConfig.firestoreDatabaseId || ''}"`;
                     3
                   </div>
                   <div>
-                    בצע <strong>Redeploy</strong> לפרויקט ב-Vercel. זהו! האפליקציה ב-Vercel תסונכרן מעתה בענן באופן מושלם.
+                    בצע <strong>Redeploy</strong> לפרויקט ב-Vercel.
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 items-start p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                  <div className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold shrink-0 text-[11px]">
+                    4
+                  </div>
+                  <div className="space-y-1">
+                    <div>
+                      <strong>אישור הדומיין ב-Firebase (מונע שגיאת unauthorized-domain):</strong>
+                    </div>
+                    <div className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                      היכנס ל-
+                      <a
+                        href="https://console.firebase.google.com/project/zippy-palace-g6rpq/authentication/settings"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline font-bold inline-flex items-center gap-0.5 mx-1"
+                      >
+                        <span>הגדרות Firebase Console</span>
+                        <ExternalLink className="w-3 h-3 inline" />
+                      </a>
+                      ⟵ גלול אל <strong>"Authorized domains"</strong> ⟵ לחץ <strong>"Add domain"</strong> ⟵ והוסף <code className="bg-amber-200/70 dark:bg-amber-900/60 px-1 py-0.5 rounded font-mono font-bold">vercel.app</code>.
+                    </div>
                   </div>
                 </div>
               </div>
