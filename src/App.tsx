@@ -62,7 +62,13 @@ import { DeletedTransactionsModal } from './components/DeletedTransactionsModal'
 import { UndoToast } from './components/UndoToast';
 import { HouseholdSyncModal } from './components/HouseholdSyncModal';
 import { ExcelDatabaseModal } from './components/ExcelDatabaseModal';
-import { ExcelDatabaseData } from './utils/excelDatabaseEngine';
+import { ExcelDatabaseBanner } from './components/ExcelDatabaseBanner';
+import {
+  ExcelDatabaseData,
+  exportExcelDatabase,
+  pickOrCreateLocalExcelFile,
+  writeDataToLocalExcelHandle,
+} from './utils/excelDatabaseEngine';
 import {
   Household,
   SharedLedgerPayload,
@@ -253,6 +259,74 @@ export default function App() {
     return saved ? JSON.parse(saved) : defaultMerchantRules;
   });
 
+  // Local Excel File Connection State (File System Access API)
+  const [localExcelHandle, setLocalExcelHandle] = useState<any | null>(null);
+  const [localExcelFileName, setLocalExcelFileName] = useState<string | null>(() => {
+    return localStorage.getItem('finos_excel_linked_name') || null;
+  });
+  const [excelSaveStatus, setExcelSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+
+  // Excel Snapshot memoized
+  const excelDatabaseSnapshot = useMemo<ExcelDatabaseData>(() => ({
+    accounts,
+    creditCards,
+    transactions,
+    fixedExpenses,
+    expectedIncomes,
+    budgets,
+    savingGoals,
+    debts,
+    investments,
+  }), [
+    accounts,
+    creditCards,
+    transactions,
+    fixedExpenses,
+    expectedIncomes,
+    budgets,
+    savingGoals,
+    debts,
+    investments,
+  ]);
+
+  // Sync state to Server-side Excel Database and to connected local file
+  const syncToExcelServerAndFile = async (dataToSync: ExcelDatabaseData) => {
+    setExcelSaveStatus('saving');
+    try {
+      // 1. Post to Express server which saves to data/finos_database.json and generates data/finos_database.xlsx
+      fetch('/api/database/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: dataToSync }),
+      }).catch((e) => console.warn('Server database post warning:', e));
+
+      // 2. If user linked a local Excel file directly on their computer/Drive
+      if (localExcelHandle) {
+        await writeDataToLocalExcelHandle(localExcelHandle, dataToSync);
+      }
+      setExcelSaveStatus('saved');
+    } catch (err) {
+      console.warn('Excel database sync notice:', err);
+      setExcelSaveStatus('error');
+    }
+  };
+
+  // Connect or link local Excel file
+  const handleConnectLocalExcelFile = async () => {
+    try {
+      const handle = await pickOrCreateLocalExcelFile();
+      if (handle) {
+        setLocalExcelHandle(handle);
+        setLocalExcelFileName(handle.name);
+        localStorage.setItem('finos_excel_linked_name', handle.name);
+        await writeDataToLocalExcelHandle(handle, excelDatabaseSnapshot);
+        setToastNotification(`קובץ האקסל "${handle.name}" חובר בהצלחה! כל תנועה תישמר בו ישירות.`);
+      }
+    } catch (err: any) {
+      console.warn('Connect local file error:', err);
+    }
+  };
+
   // Persist states to localStorage
   useEffect(() => {
     localStorage.setItem('finos_accounts', JSON.stringify(accounts));
@@ -282,6 +356,38 @@ export default function App() {
     deletedTransactions,
   ]);
 
+  // Initial cross-browser database bootstrap from server if local storage is blank
+  useEffect(() => {
+    const fetchServerDatabase = async () => {
+      try {
+        const res = await fetch('/api/database/state');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.exists && json.data) {
+          const sData = json.data;
+          // If local transactions are empty (e.g. fresh browser Y), load from server!
+          setTransactions((prev) => {
+            if (prev.length === 0 && sData.transactions && sData.transactions.length > 0) {
+              return sData.transactions;
+            }
+            return prev;
+          });
+          setAccounts((prev) => (prev.length === 0 && sData.accounts?.length ? sData.accounts : prev));
+          setCreditCards((prev) => (prev.length === 0 && sData.creditCards?.length ? sData.creditCards : prev));
+          setBudgets((prev) => (prev.length === 0 && sData.budgets?.length ? sData.budgets : prev));
+          setFixedExpenses((prev) => (prev.length === 0 && sData.fixedExpenses?.length ? sData.fixedExpenses : prev));
+          setExpectedIncomes((prev) => (prev.length === 0 && sData.expectedIncomes?.length ? sData.expectedIncomes : prev));
+          setSavingGoals((prev) => (prev.length === 0 && sData.savingGoals?.length ? sData.savingGoals : prev));
+          setDebts((prev) => (prev.length === 0 && sData.debts?.length ? sData.debts : prev));
+          setInvestments((prev) => (prev.length === 0 && sData.investments?.length ? sData.investments : prev));
+        }
+      } catch (e) {
+        // quiet ignore
+      }
+    };
+    fetchServerDatabase();
+  }, []);
+
   // 1. Detect join / sync code from URL params (e.g. ?sync=MASTER or ?join=FAM-1234)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -303,15 +409,25 @@ export default function App() {
         isRemoteUpdateRef.current = true;
         if (cloudLedger.accounts && cloudLedger.accounts.length > 0) setAccounts(cloudLedger.accounts);
         if (cloudLedger.creditCards && cloudLedger.creditCards.length > 0) setCreditCards(cloudLedger.creditCards);
-        if (cloudLedger.transactions) setTransactions(cloudLedger.transactions);
-        if (cloudLedger.fixedExpenses) setFixedExpenses(cloudLedger.fixedExpenses);
-        if (cloudLedger.expectedIncomes) setExpectedIncomes(cloudLedger.expectedIncomes);
+        
+        // SAFE MERGE TRANSACTIONS - NEVER LOSE LOCAL ACTIONS!
+        if (cloudLedger.transactions && cloudLedger.transactions.length > 0) {
+          setTransactions((prev) => {
+            if (prev.length === 0) return cloudLedger.transactions;
+            const cloudIds = new Set(cloudLedger.transactions.map((t: Transaction) => t.id));
+            const localOnly = prev.filter((t) => !cloudIds.has(t.id));
+            return [...cloudLedger.transactions, ...localOnly];
+          });
+        }
+        
+        if (cloudLedger.fixedExpenses && cloudLedger.fixedExpenses.length > 0) setFixedExpenses(cloudLedger.fixedExpenses);
+        if (cloudLedger.expectedIncomes && cloudLedger.expectedIncomes.length > 0) setExpectedIncomes(cloudLedger.expectedIncomes);
         if (cloudLedger.categories && cloudLedger.categories.length > 0) setCategories(cloudLedger.categories);
         if (cloudLedger.budgets && cloudLedger.budgets.length > 0) setBudgets(cloudLedger.budgets);
-        if (cloudLedger.savingGoals) setSavingGoals(cloudLedger.savingGoals);
-        if (cloudLedger.debts) setDebts(cloudLedger.debts);
-        if (cloudLedger.investments) setInvestments(cloudLedger.investments);
-        if (cloudLedger.merchantRules) setMerchantRules(cloudLedger.merchantRules);
+        if (cloudLedger.savingGoals && cloudLedger.savingGoals.length > 0) setSavingGoals(cloudLedger.savingGoals);
+        if (cloudLedger.debts && cloudLedger.debts.length > 0) setDebts(cloudLedger.debts);
+        if (cloudLedger.investments && cloudLedger.investments.length > 0) setInvestments(cloudLedger.investments);
+        if (cloudLedger.merchantRules && Object.keys(cloudLedger.merchantRules).length > 0) setMerchantRules(cloudLedger.merchantRules);
         if (cloudLedger.deletedTransactions) setDeletedTransactions(cloudLedger.deletedTransactions);
 
         setLastSyncedAt(new Date());
@@ -331,8 +447,10 @@ export default function App() {
     return () => unsubscribe();
   }, [currentHousehold?.id]);
 
-  // 3. Auto-save local modifications to Firestore Master Database (Debounced, skipping remote snapshots)
+  // 3. Auto-save local modifications to Server Excel Database and Firestore (Debounced)
   useEffect(() => {
+    syncToExcelServerAndFile(excelDatabaseSnapshot);
+
     if (!currentHousehold?.id || isRemoteUpdateRef.current) return;
 
     const timer = setTimeout(async () => {
@@ -362,23 +480,12 @@ export default function App() {
       } finally {
         setIsSyncing(false);
       }
-    }, 1200);
+    }, 1000);
 
     return () => clearTimeout(timer);
   }, [
     currentHousehold?.id,
-    accounts,
-    creditCards,
-    transactions,
-    fixedExpenses,
-    expectedIncomes,
-    categories,
-    budgets,
-    savingGoals,
-    debts,
-    investments,
-    merchantRules,
-    deletedTransactions,
+    excelDatabaseSnapshot,
   ]);
 
   // Household & Master Database Management Actions
@@ -776,7 +883,12 @@ export default function App() {
   }, [deletedTransactions]);
 
   const handleAddTransaction = (newTx: Transaction) => {
-    setTransactions((prev) => [newTx, ...prev]);
+    setTransactions((prev) => {
+      const next = [newTx, ...prev];
+      localStorage.setItem('finos_transactions', JSON.stringify(next));
+      return next;
+    });
+    setToastNotification(`התנועה "${newTx.description}" תועדה ונשמרה למסד נתונים Excel ✓`);
   };
 
   const handleImportCsv = (newTxs: Transaction[], newCheckingBalance?: number) => {
@@ -845,6 +957,19 @@ export default function App() {
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
         currentHousehold={currentHousehold}
         isSyncing={isSyncing}
+      />
+
+      {/* Excel Database Banner */}
+      <ExcelDatabaseBanner
+        appData={excelDatabaseSnapshot}
+        transactionsCount={transactions.length}
+        lastSyncedAt={lastSyncedAt}
+        isSyncing={isSyncing}
+        excelSaveStatus={excelSaveStatus}
+        localFileName={localExcelFileName}
+        onOpenExcelModal={() => setIsExcelDbModalOpen(true)}
+        onConnectLocalFile={handleConnectLocalExcelFile}
+        onManualSync={handleManualSync}
       />
 
       {/* Main Page Container */}
@@ -1024,6 +1149,8 @@ export default function App() {
         isSyncing={isSyncing}
         lastSyncedAt={lastSyncedAt}
         onManualSync={handleManualSync}
+        onConnectLocalFile={handleConnectLocalExcelFile}
+        localFileName={localExcelFileName}
       />
 
       {/* Quick Balance & Credit Card Update Modal */}

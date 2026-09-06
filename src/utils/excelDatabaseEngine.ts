@@ -61,13 +61,13 @@ export const SHEET_NAMES = {
 } as const;
 
 /**
- * Exports the complete application database state to a single multi-sheet Excel file (.xlsx)
+ * Builds the complete Excel workbook with all 9 sheets in Hebrew
  */
-export function exportExcelDatabase(data: ExcelDatabaseData, filename?: string): void {
+export function buildExcelDatabaseWorkbook(data: ExcelDatabaseData): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
 
   // 1. Transactions Sheet
-  const transactionsRows = data.transactions.map((tx) => ({
+  const transactionsRows = (data.transactions || []).map((tx) => ({
     'מזהה תנועה (ID)': tx.id,
     'תאריך': tx.date,
     'תיאור': tx.description,
@@ -223,10 +223,34 @@ export function exportExcelDatabase(data: ExcelDatabaseData, filename?: string):
   const readmeSheet = XLSX.utils.json_to_sheet(readmeRows);
   XLSX.utils.book_append_sheet(workbook, readmeSheet, SHEET_NAMES.README);
 
-  // Trigger Download
+  return workbook;
+}
+
+/**
+ * Exports and triggers download of the complete application database state to an Excel file (.xlsx)
+ */
+export function exportExcelDatabase(data: ExcelDatabaseData, filename?: string): void {
+  const workbook = buildExcelDatabaseWorkbook(data);
   const dateStr = new Date().toISOString().slice(0, 10);
-  const finalFilename = filename || `FinSmart_Database_${dateStr}.xlsx`;
+  const finalFilename = filename || `FinOS_Database_${dateStr}.xlsx`;
   XLSX.writeFile(workbook, finalFilename);
+}
+
+/**
+ * Generates an Excel binary Uint8Array representation of the database
+ */
+export function generateExcelDatabaseBinary(data: ExcelDatabaseData): Uint8Array {
+  const workbook = buildExcelDatabaseWorkbook(data);
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
+/**
+ * Generates an Excel Blob for download or File System writes
+ */
+export function generateExcelDatabaseBlob(data: ExcelDatabaseData): Blob {
+  const workbook = buildExcelDatabaseWorkbook(data);
+  const buf = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
 /**
@@ -591,3 +615,170 @@ export function downloadBlankExcelTemplate(): void {
 
   exportExcelDatabase(sampleData, 'FinSmart_Blank_Database_Template.xlsx');
 }
+
+/**
+ * Parses raw array buffer of Excel workbook directly into ExcelDatabaseData
+ */
+export function parseExcelDatabaseBuffer(buffer: ArrayBuffer | Uint8Array, sourceName = 'database.xlsx'): ExcelDatabaseParseResult {
+  const workbook = XLSX.read(buffer, { type: buffer instanceof Uint8Array ? 'buffer' : 'array' });
+
+  const result: ExcelDatabaseData = {
+    accounts: [],
+    creditCards: [],
+    transactions: [],
+    budgets: [],
+    fixedExpenses: [],
+    expectedIncomes: [],
+    savingGoals: [],
+    debts: [],
+    investments: [],
+  };
+
+  const getSheet = (hebrewName: string, englishFallback: string): any[] => {
+    let sheetName = workbook.SheetNames.find(
+      (n) => n.trim().toLowerCase() === hebrewName.toLowerCase() || n.trim().toLowerCase() === englishFallback.toLowerCase()
+    );
+    if (!sheetName) {
+      sheetName = workbook.SheetNames.find(
+        (n) => n.includes(hebrewName) || n.toLowerCase().includes(englishFallback.toLowerCase())
+      );
+    }
+    if (!sheetName) return [];
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) return [];
+    return XLSX.utils.sheet_to_json(worksheet);
+  };
+
+  // Transactions
+  const rawTx = getSheet(SHEET_NAMES.TRANSACTIONS, 'transactions');
+  if (rawTx.length > 0) {
+    result.transactions = rawTx.map((row: any, idx: number) => {
+      const id = String(row['מזהה תנועה (ID)'] || row['id'] || `tx_parsed_${Date.now()}_${idx}`);
+      let date = String(row['תאריך'] || row['date'] || new Date().toISOString().split('T')[0]).trim();
+      if (typeof row['תאריך'] === 'number') {
+        const d = XLSX.SSF.parse_date_code(row['תאריך']);
+        if (d) date = `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+      }
+      const desc = String(row['תיאור'] || row['description'] || 'תנועה מאקסל');
+      const amount = Math.abs(parseFloat(row['סכום (₪)'] ?? row['סכום'] ?? row['amount'] ?? 0));
+      const rawType = String(row['סוג (הוצאה / הכנסה)'] || row['type'] || 'expense').toLowerCase();
+      const type = rawType.includes('הכנסה') || rawType === 'income' ? 'income' : 'expense';
+      const category = String(row['קטגוריה'] || row['category'] || (type === 'income' ? 'שכר והכנסות' : 'שונות'));
+
+      return {
+        id,
+        date,
+        description: desc,
+        amount,
+        type,
+        category,
+        subCategory: row['תת קטגוריה'] || undefined,
+        accountId: row['מזהה חשבון משויך'] || undefined,
+        creditCardId: row['מזהה כרטיס אשראי'] || undefined,
+        paymentMethod: row['אמצעי תשלום'] || undefined,
+        isFixed: row['תשלום קבוע? (כן/לא)'] === 'כן' || row['isFixed'] === true,
+        isRecurring: row['תשלום חוזר? (כן/לא)'] === 'כן' || row['isRecurring'] === true,
+        isBusiness: row['הוצאה עסקית? (כן/לא)'] === 'כן' || row['isBusiness'] === true,
+        notes: row['הערות'] || undefined,
+      };
+    });
+  }
+
+  // Accounts
+  const rawAcc = getSheet(SHEET_NAMES.ACCOUNTS, 'accounts');
+  if (rawAcc.length > 0) {
+    result.accounts = rawAcc.map((row: any, idx: number) => ({
+      id: String(row['מזהה חשבון (ID)'] || row['id'] || `acc_${idx + 1}`),
+      name: String(row['שם החשבון'] || row['name'] || `חשבון ${idx + 1}`),
+      type: (row['סוג חשבון'] || row['type'] || 'checking') as any,
+      bankName: row['שם הבנק'] || row['bankName'] || undefined,
+      balance: parseFloat(row['יתרת עו"ש נוכחית (₪)'] ?? row['balance'] ?? 0),
+      currency: row['מטבע'] || 'ILS',
+      lastUpdated: String(row['תאריך עדכון יתרה'] || new Date().toISOString().split('T')[0]),
+      isFamilyShared: row['חשבון משותף? (כן/לא)'] === 'כן',
+      notes: row['הערות'] || undefined,
+    }));
+  }
+
+  // Cards
+  const rawCards = getSheet(SHEET_NAMES.CARDS, 'cards');
+  if (rawCards.length > 0) {
+    result.creditCards = rawCards.map((row: any, idx: number) => ({
+      id: String(row['מזהה כרטיס (ID)'] || row['id'] || `card_${idx + 1}`),
+      name: String(row['שם הכרטיס'] || row['name'] || `כרטיס ${idx + 1}`),
+      company: row['חברת אשראי'] || 'ויזה',
+      lastFourDigits: String(row['4 ספרות אחרונות'] || '1234'),
+      limit: parseFloat(row['מסגרת אשראי (₪)'] ?? 15000),
+      billingDay: parseInt(row['יום חיוב בחודש'] ?? 10, 10),
+      currentBillingTotal: parseFloat(row['חיוב צפוי לחודש הנוכחי (₪)'] ?? 0),
+      remainingInstallmentsTotal: parseFloat(row['סך עסקאות בתשלומים עתידיים (₪)'] ?? 0),
+      linkedAccountId: row['מזהה חשבון בנק מקושר'] || undefined,
+    }));
+  }
+
+  return {
+    data: result,
+    stats: {
+      accountsCount: result.accounts.length,
+      creditCardsCount: result.creditCards.length,
+      transactionsCount: result.transactions.length,
+      budgetsCount: result.budgets.length,
+      fixedExpensesCount: result.fixedExpenses.length,
+      expectedIncomesCount: result.expectedIncomes.length,
+      savingGoalsCount: result.savingGoals.length,
+      debtsCount: result.debts.length,
+      investmentsCount: result.investments.length,
+    },
+    sourceFileName: sourceName,
+  };
+}
+
+/**
+ * File System Access API: Pick or Create an Excel database file directly on the user's computer/Drive
+ */
+export async function pickOrCreateLocalExcelFile(): Promise<any | null> {
+  if (typeof window === 'undefined') return null;
+  const anyWin = window as any;
+  if (!anyWin.showSaveFilePicker && !anyWin.showOpenFilePicker) {
+    return null;
+  }
+
+  try {
+    if (anyWin.showSaveFilePicker) {
+      const handle = await anyWin.showSaveFilePicker({
+        suggestedName: `FinOS_Database_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        types: [
+          {
+            description: 'קובץ מסד נתונים Excel (.xlsx)',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+            },
+          },
+        ],
+      });
+      return handle;
+    }
+  } catch (e: any) {
+    if (e.name === 'AbortError') return null;
+    console.warn('File picker error:', e);
+  }
+  return null;
+}
+
+/**
+ * Saves binary Excel directly to a local FileSystemFileHandle
+ */
+export async function writeDataToLocalExcelHandle(handle: any, data: ExcelDatabaseData): Promise<boolean> {
+  try {
+    if (!handle || !handle.createWritable) return false;
+    const blob = generateExcelDatabaseBlob(data);
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  } catch (err) {
+    console.error('Error writing to local Excel file handle:', err);
+    return false;
+  }
+}
+

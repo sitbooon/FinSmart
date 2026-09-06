@@ -30,6 +30,8 @@ interface ExcelDatabaseModalProps {
   isSyncing?: boolean;
   lastSyncedAt?: Date | null;
   onManualSync?: () => Promise<void>;
+  onConnectLocalFile?: () => Promise<void>;
+  localFileName?: string | null;
 }
 
 export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
@@ -40,6 +42,8 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
   isSyncing = false,
   lastSyncedAt = null,
   onManualSync,
+  onConnectLocalFile,
+  localFileName = null,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'export' | 'import' | 'guide'>('export');
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -303,6 +307,15 @@ export const ExcelDatabaseModal: React.FC<ExcelDatabaseModalProps> = ({
                     </>
                   )}
                 </button>
+
+                {onConnectLocalFile && (
+                  <button
+                    onClick={onConnectLocalFile}
+                    className="w-full py-2.5 px-4 rounded-xl bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/60 text-teal-800 dark:text-teal-200 border border-teal-200 dark:border-teal-800/80 font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-2"
+                  >
+                    <span>{localFileName ? `קובץ מקושר פעיל: ${localFileName} (לחץ להחלפה)` : '🔗 חבר לקובץ מקומי במחשב או ב-Google Drive לשמירה אוטומטית ישירה'}</span>
+                  </button>
+                )}
 
                 <div className="flex items-center justify-between pt-2">
                   <button

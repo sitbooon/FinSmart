@@ -1,7 +1,11 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
+import * as XLSX from "xlsx";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { parseTextStatement } from "../utils/bankStatementParser";
+import { buildExcelDatabaseWorkbook } from "../utils/excelDatabaseEngine";
 
 dotenv.config();
 
@@ -240,6 +244,105 @@ app.post("/api/csv/parse", (req, res) => {
     res.json({ count: transactions.length, records: transactions, transactions });
   } catch (err: any) {
     res.status(500).json({ error: "שגיאה בניתוח קובץ CSV", details: err.message });
+  }
+});
+
+// Excel Database Persistence Engine (Server-side storage)
+const DATA_DIR = path.join(process.cwd(), "data");
+const DB_JSON_FILE = path.join(DATA_DIR, "finos_database.json");
+const DB_EXCEL_FILE = path.join(DATA_DIR, "finos_database.xlsx");
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    } catch (e) {
+      console.warn("Could not create data dir:", e);
+    }
+  }
+}
+
+// Get saved master database state
+app.get("/api/database/state", (_req, res) => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(DB_JSON_FILE)) {
+      const raw = fs.readFileSync(DB_JSON_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      return res.json({ exists: true, data: parsed.data || parsed, updatedAt: parsed.updatedAt || null });
+    }
+    return res.json({ exists: false });
+  } catch (err: any) {
+    console.error("Error reading database state:", err);
+    return res.status(500).json({ error: "שגיאה בקריאת מסד הנתונים" });
+  }
+});
+
+// Save master database state and write Excel file
+app.post("/api/database/state", (req, res) => {
+  try {
+    const { data } = req.body;
+    if (!data) {
+      return res.status(400).json({ error: "נתונים לא סופקו" });
+    }
+
+    ensureDataDir();
+    const payload = {
+      data,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Write JSON backup
+    fs.writeFileSync(DB_JSON_FILE, JSON.stringify(payload, null, 2), "utf-8");
+
+    // 2. Generate and write Excel workbook
+    try {
+      const workbook = buildExcelDatabaseWorkbook(data);
+      XLSX.writeFile(workbook, DB_EXCEL_FILE);
+    } catch (excelErr) {
+      console.warn("Could not write Excel file to disk:", excelErr);
+    }
+
+    return res.json({
+      success: true,
+      updatedAt: payload.updatedAt,
+      stats: {
+        transactions: data.transactions?.length || 0,
+        accounts: data.accounts?.length || 0,
+        cards: data.creditCards?.length || 0,
+      },
+    });
+  } catch (err: any) {
+    console.error("Error saving database state:", err);
+    return res.status(500).json({ error: "שגיאה בשמירת מסד הנתונים", details: err.message });
+  }
+});
+
+// Download latest Excel database file directly
+app.get("/api/database/download", (_req, res) => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(DB_EXCEL_FILE)) {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="FinOS_Database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      return res.sendFile(DB_EXCEL_FILE);
+    }
+
+    // If Excel doesn't exist yet but JSON exists, generate it
+    if (fs.existsSync(DB_JSON_FILE)) {
+      const raw = fs.readFileSync(DB_JSON_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      const workbook = buildExcelDatabaseWorkbook(parsed.data || parsed);
+      XLSX.writeFile(workbook, DB_EXCEL_FILE);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="FinOS_Database_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      return res.sendFile(DB_EXCEL_FILE);
+    }
+
+    return res.status(404).json({ error: "טרם נשמר קובץ אקסל" });
+  } catch (err: any) {
+    console.error("Error downloading database:", err);
+    return res.status(500).json({ error: "שגיאה בהורדת קובץ אקסל" });
   }
 });
 
