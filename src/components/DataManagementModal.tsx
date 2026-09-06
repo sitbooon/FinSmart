@@ -14,7 +14,13 @@ import {
   Check,
   Globe,
   Copy,
+  FileSpreadsheet,
 } from 'lucide-react';
+import {
+  exportExcelDatabase,
+  parseExcelDatabase,
+  ExcelDatabaseData,
+} from '../utils/excelDatabaseEngine';
 import {
   Account,
   CreditCard,
@@ -61,10 +67,40 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   onRestoreBackup,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const excelFileInputRef = useRef<HTMLInputElement | null>(null);
   const [copiedNotification, setCopiedNotification] = useState(false);
+  const [excelExportNotification, setExcelExportNotification] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  // Export full app data to Excel database (.xlsx)
+  const handleExportExcel = () => {
+    try {
+      exportExcelDatabase(appData);
+      setExcelExportNotification(true);
+      setTimeout(() => setExcelExportNotification(false), 3000);
+    } catch (err: any) {
+      alert('שגיאה ביצירת קובץ אקסל: ' + err.message);
+    }
+  };
+
+  // Import full app data from Excel database (.xlsx)
+  const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setImportStatus('מפענח קובץ אקסל...');
+      const result = await parseExcelDatabase(file);
+      onRestoreBackup(result.data);
+      setImportStatus(`הנתונים מאקסל שוחזרו בהצלחה! (${result.stats.transactionsCount} תנועות, ${result.stats.accountsCount} חשבונות)`);
+      setTimeout(() => setImportStatus(null), 5000);
+    } catch (err: any) {
+      setImportStatus('שגיאה בטעינת קובץ האקסל: ' + (err.message || 'שגיאה לא ידועה'));
+    } finally {
+      if (excelFileInputRef.current) excelFileInputRef.current.value = '';
+    }
+  };
 
   // Export full app data to a downloadable JSON file
   const handleExportJson = () => {
@@ -252,49 +288,100 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
           </div>
 
           {/* Backup & Restore Section */}
-          <div className="pt-3 border-t border-[#E1E8E7] dark:border-[#2D3636] space-y-3">
-            <h3 className="font-bold text-xs text-[#2D3436] dark:text-white flex items-center gap-1.5">
-              <Laptop className="w-4 h-4 text-gray-400" />
-              <span>גיבוי ושחזור קבצים מקומיים (ללא תלות בענן)</span>
-            </h3>
+          <div className="pt-3 border-t border-[#E1E8E7] dark:border-[#2D3636] space-y-4">
+            <div>
+              <h3 className="font-bold text-xs text-[#2D3436] dark:text-white flex items-center gap-1.5">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>מסד נתונים באקסל (Excel Database - מומלץ)</span>
+              </h3>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                קובץ אקסל מלא עם כל הנתונים, התנועות והחשבונות בלשוניות נפרדות. ניתן לערוך ב-Excel או לשמור ב-Google Drive.
+              </p>
+            </div>
 
             <div className="flex flex-wrap gap-2.5">
-              {/* Export Button */}
+              {/* Excel Export Button */}
               <button
                 type="button"
-                onClick={handleExportJson}
-                className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white dark:bg-[#191D1E] hover:bg-[#F4F7F6] dark:hover:bg-[#252D2E] text-[#2D3436] dark:text-white font-bold text-xs border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs transition-colors"
+                onClick={handleExportExcel}
+                className="flex-1 min-w-[220px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-850 dark:text-emerald-300 font-bold text-xs border border-emerald-300 dark:border-emerald-800/80 shadow-xs transition-colors"
               >
-                {copiedNotification ? (
+                {excelExportNotification ? (
                   <>
-                    <Check className="w-4 h-4 text-[#00B894]" />
-                    <span className="text-[#00B894]">קובץ הגיבוי הורד בהצלחה!</span>
+                    <Check className="w-4 h-4 text-emerald-600 animate-bounce" />
+                    <span>קובץ ה-Excel הורד בהצלחה!</span>
                   </>
                 ) : (
                   <>
-                    <Download className="w-4 h-4 text-[#00B894]" />
-                    <span>הורד קובץ גיבוי של כל הנתונים (JSON)</span>
+                    <Download className="w-4 h-4 text-emerald-600" />
+                    <span>הורד מסד נתונים מלא (Excel .xlsx)</span>
                   </>
                 )}
               </button>
 
-              {/* Import Button */}
+              {/* Excel Import Button */}
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white dark:bg-[#191D1E] hover:bg-[#F4F7F6] dark:hover:bg-[#252D2E] text-[#2D3436] dark:text-white font-bold text-xs border border-[#E1E8E7] dark:border-[#2D3636] shadow-xs transition-colors"
+                onClick={() => excelFileInputRef.current?.click()}
+                className="flex-1 min-w-[220px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white dark:bg-[#191D1E] hover:bg-[#F4F7F6] dark:hover:bg-[#252D2E] text-emerald-800 dark:text-emerald-300 font-bold text-xs border border-emerald-300 dark:border-emerald-800 shadow-xs transition-colors"
               >
-                <Upload className="w-4 h-4 text-blue-500" />
-                <span>שחזר נתונים מקובץ גיבוי (JSON)</span>
+                <Upload className="w-4 h-4 text-emerald-600" />
+                <span>טען וסנכרן מקובץ אקסל (.xlsx)</span>
               </button>
 
               <input
-                ref={fileInputRef}
+                ref={excelFileInputRef}
                 type="file"
-                accept=".json"
+                accept=".xlsx, .xls"
                 className="hidden"
-                onChange={handleFileChange}
+                onChange={handleExcelFileChange}
               />
+            </div>
+
+            <div className="pt-2">
+              <h4 className="font-semibold text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1.5 mb-2">
+                <FileJson className="w-3.5 h-3.5 text-gray-400" />
+                <span>גיבוי טכני נוסף (JSON):</span>
+              </h4>
+
+              <div className="flex flex-wrap gap-2.5">
+                {/* JSON Export Button */}
+                <button
+                  type="button"
+                  onClick={handleExportJson}
+                  className="flex-1 min-w-[180px] flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gray-50 dark:bg-[#191D1E] hover:bg-gray-100 dark:hover:bg-[#252D2E] text-gray-700 dark:text-gray-300 font-semibold text-[11px] border border-gray-200 dark:border-gray-700 shadow-2xs transition-colors"
+                >
+                  {copiedNotification ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#00B894]" />
+                      <span className="text-[#00B894]">הורד (JSON)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5 text-gray-500" />
+                      <span>גיבוי JSON מלא</span>
+                    </>
+                  )}
+                </button>
+
+                {/* JSON Import Button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 min-w-[180px] flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gray-50 dark:bg-[#191D1E] hover:bg-gray-100 dark:hover:bg-[#252D2E] text-gray-700 dark:text-gray-300 font-semibold text-[11px] border border-gray-200 dark:border-gray-700 shadow-2xs transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5 text-blue-500" />
+                  <span>שחזור מקובץ JSON</span>
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+              </div>
             </div>
 
             {importStatus && (

@@ -61,6 +61,8 @@ import { AvailableMoneyExplainerModal } from './components/AvailableMoneyExplain
 import { DeletedTransactionsModal } from './components/DeletedTransactionsModal';
 import { UndoToast } from './components/UndoToast';
 import { HouseholdSyncModal } from './components/HouseholdSyncModal';
+import { ExcelDatabaseModal } from './components/ExcelDatabaseModal';
+import { ExcelDatabaseData } from './utils/excelDatabaseEngine';
 import { auth } from './firebase/config';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import {
@@ -117,6 +119,7 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isDataModalOpen, setIsDataModalOpen] = useState(false);
+  const [isExcelDbModalOpen, setIsExcelDbModalOpen] = useState(false);
   const [isQuickBalanceOpen, setIsQuickBalanceOpen] = useState(false);
   const [isAvailableExplainerOpen, setIsAvailableExplainerOpen] = useState(false);
   const [isDeletedModalOpen, setIsDeletedModalOpen] = useState(false);
@@ -655,6 +658,21 @@ export default function App() {
     localStorage.setItem('finos_is_demo', 'false');
   };
 
+  const handleRestoreExcelDatabase = (newData: ExcelDatabaseData) => {
+    if (newData.accounts && newData.accounts.length > 0) setAccounts(newData.accounts);
+    if (newData.creditCards && newData.creditCards.length > 0) setCreditCards(newData.creditCards);
+    if (newData.transactions) setTransactions(newData.transactions);
+    if (newData.budgets && newData.budgets.length > 0) setBudgets(newData.budgets);
+    if (newData.fixedExpenses) setFixedExpenses(newData.fixedExpenses);
+    if (newData.expectedIncomes) setExpectedIncomes(newData.expectedIncomes);
+    if (newData.savingGoals) setSavingGoals(newData.savingGoals);
+    if (newData.debts) setDebts(newData.debts);
+    if (newData.investments) setInvestments(newData.investments);
+    setIsDemoMode(false);
+    localStorage.setItem('finos_is_demo', 'false');
+    setToastNotification(`מסד הנתונים מאקסל נטען וסונכרן בהצלחה! (${newData.transactions?.length || 0} תנועות)`);
+  };
+
   // Transactions deletion & restore logic
   const handleDeleteTransaction = (id: string) => {
     const tx = transactions.find((t) => t.id === id);
@@ -795,6 +813,7 @@ export default function App() {
         setIsDark={setIsDark}
         isDemoMode={isDemoMode}
         onOpenDataModal={() => setIsDataModalOpen(true)}
+        onOpenExcelDbModal={() => setIsExcelDbModalOpen(true)}
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
         currentHousehold={currentHousehold}
         currentUser={currentUser}
@@ -957,6 +976,24 @@ export default function App() {
           deletedTransactions,
         }}
         onRestoreBackup={handleRestoreBackup}
+      />
+
+      {/* Excel Master Database Modal */}
+      <ExcelDatabaseModal
+        isOpen={isExcelDbModalOpen}
+        onClose={() => setIsExcelDbModalOpen(false)}
+        appData={{
+          accounts,
+          creditCards,
+          transactions,
+          fixedExpenses,
+          expectedIncomes,
+          budgets,
+          savingGoals,
+          debts,
+          investments,
+        }}
+        onRestoreData={handleRestoreExcelDatabase}
       />
 
       {/* Quick Balance & Credit Card Update Modal */}

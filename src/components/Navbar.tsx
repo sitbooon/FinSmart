@@ -53,6 +53,7 @@ interface NavbarProps {
   isDemoMode?: boolean;
   onOpenDataModal?: () => void;
   onOpenSyncModal?: () => void;
+  onOpenExcelDbModal?: () => void;
   currentHousehold?: Household | null;
   currentUser?: User | null;
   isSyncing?: boolean;
@@ -73,6 +74,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isDemoMode = false,
   onOpenDataModal,
   onOpenSyncModal,
+  onOpenExcelDbModal,
   currentHousehold = null,
   currentUser = null,
   isSyncing = false,
@@ -225,6 +227,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 <span className="hidden md:inline">ייבוא מהבנק</span>
               </button>
+
+              {onOpenExcelDbModal && (
+                <button
+                  onClick={onOpenExcelDbModal}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600/10 dark:bg-emerald-500/15 hover:bg-emerald-600/20 text-emerald-850 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-700 shadow-2xs transition-all"
+                  title="מסד נתונים מבוסס קובץ אקסל (ייצוא, טעינה וסנכרון מלא)"
+                  aria-label="מסד נתונים אקסל"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                  <span className="hidden lg:inline">מסד נתונים Excel</span>
+                  <span className="lg:hidden">אקסל</span>
+                </button>
+              )}
 
               {onOpenDataModal && (
                 <button
@@ -686,6 +701,22 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
                 <span>&larr;</span>
               </button>
+
+              {onOpenExcelDbModal && (
+                <button
+                  onClick={() => {
+                    setIsMobileDrawerOpen(false);
+                    onOpenExcelDbModal();
+                  }}
+                  className="w-full flex items-center justify-between p-3 rounded-2xl bg-emerald-100/70 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs font-bold transition-colors"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                    <span>מסד נתונים באקסל (ייצוא / טעינה מלאה)</span>
+                  </div>
+                  <span>&larr;</span>
+                </button>
+              )}
 
               {onOpenDataModal && (
                 <button
